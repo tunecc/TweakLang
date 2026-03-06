@@ -1,0 +1,29 @@
+{
+  "minVersion": "0.4",
+  "class": "DepictionTabView",
+  "tabs": [
+    {
+      "class": "DepictionStackView",
+      "tabname": "Overview",
+      "views": [
+        {
+          "class": "DepictionHeaderView",
+          "title": "TweakLang"
+        },
+        {
+          "class": "DepictionMarkdownView",
+          "markdown": "为单个越狱插件偏好设置页面自定义显示语言。\\n\\nCustomize the display language of individual jailbreak tweak preference panes in Settings."
+        },
+        {
+          "class": "DepictionSeparatorView"
+        },
+        {
+          "class": "DepictionTableButtonView",
+          "title": "GitHub",
+          "action": "https://github.com/tunecc/TweakLang",
+          "openExternal": 1
+        }
+      ]
+    }
+  ]
+}

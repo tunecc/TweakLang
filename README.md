@@ -60,37 +60,6 @@
 packages/
 ```
 
-## 构建说明
-
-详细构建方法见：
-
-- [BUILDING.md](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/BUILDING.md)
-
-构建前请注意：
-
-- 不要在带空格的路径下直接构建
-- 默认需要分别准备 `rootless` Theos 和 `roothide` Theos
-- 每次发布建议同时构建 `rootless` 与 `roothide`
-
-如果只是日常构建，默认入口是：
-
-```bash
-./build_packages.sh
-```
-
-## 项目结构
-
-- [Tweak.x](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/Tweak.x)
-  主 tweak 逻辑，负责在 `设置.app` 中拦截本地化读取
-- [tweaklangprefs/TLRootListController.m](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/tweaklangprefs/TLRootListController.m)
-  设置界面逻辑
-- [layout/Library/PreferenceLoader/Preferences/TweakLang.plist](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/layout/Library/PreferenceLoader/Preferences/TweakLang.plist)
-  PreferenceLoader 入口配置
-- [control](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/control)
-  Debian 包信息
-- [build_packages.sh](/Users/tune/Downloads/untitled%20folder/PrefLangOverride/build_packages.sh)
-  一键构建 `rootless` 和 `roothide` 包
-
 ## 偏好与清理
 
 - 偏好域：`com.tune.tweaklang`

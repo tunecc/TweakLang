@@ -17,3 +17,7 @@ xcuserdata/
 
 # Logs
 *.log
+build_packages.sh
+.gitignore
+BUILDING.md
+ios_tweak_language_override_9b0c06ff.plan.md

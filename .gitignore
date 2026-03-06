@@ -1,0 +1,19 @@
+# macOS
+.DS_Store
+
+# Theos build artifacts
+/.theos/
+/build/
+/packages/
+*.deb
+*.ddeb
+
+# Xcode / editor
+DerivedData/
+*.xcworkspace
+xcuserdata/
+.idea/
+.vscode/
+
+# Logs
+*.log

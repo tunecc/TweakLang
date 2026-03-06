@@ -1,0 +1,17 @@
+"app.title" = "TweakLang";
+"header.footer" = "Override the display language for individual jailbreak tweaks.\nChanges take effect when you re-enter a tweak's settings page.";
+"empty.no_localizations" = "No tweaks with localization resources found.";
+"group.installed_tweaks" = "Installed Tweaks";
+"group.installed_tweaks.footer" = "%lu tweaks detected";
+"system_default" = "System Default";
+"ui.button" = "Lang";
+"ui.picker.title" = "TweakLang Interface";
+"ui.picker.message" = "Choose the interface language for this settings page.";
+"ui.picker.system" = "System Default";
+"ui.picker.english" = "English";
+"ui.picker.zh_hans" = "Simplified Chinese";
+"ui.picker.cancel" = "Cancel";
+"language.page_title" = "Language";
+"language.instructions" = "Choose which localization this tweak's settings page should use.";
+"language.current_format" = "Current selection: %@";
+"language.selected_format" = "[Selected] %@";

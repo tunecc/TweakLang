@@ -1,0 +1,9 @@
+Package: com.tune.tweaklang
+Name: TweakLang
+Depends: mobilesubstrate, preferenceloader
+Version: 1.1.6
+Architecture: iphoneos-arm64
+Description: 为设置中的各个越狱插件面板自定义显示语言。Customize display language for individual jailbreak tweak preference panels in Settings.
+Maintainer: Tune
+Author: Tune
+Section: Tweaks

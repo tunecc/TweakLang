@@ -1,0 +1,4 @@
+#!/bin/bash
+if [ "$1" = "purge" ] || [ "$1" = "remove" ]; then
+    rm -f /var/mobile/Library/Preferences/com.tune.tweaklang.plist
+fi

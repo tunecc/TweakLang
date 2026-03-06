@@ -1,0 +1,17 @@
+"app.title" = "插件换语";
+"header.footer" = "为每个越狱插件单独覆盖设置页显示语言。\n重新进入对应插件设置页后生效。";
+"empty.no_localizations" = "没有找到带本地化资源的插件。";
+"group.installed_tweaks" = "已安装的插件";
+"group.installed_tweaks.footer" = "检测到 %lu 个插件";
+"system_default" = "跟随系统";
+"ui.button" = "语言";
+"ui.picker.title" = "插件换语界面语言";
+"ui.picker.message" = "选择这个设置页面自身要使用的语言。";
+"ui.picker.system" = "跟随系统";
+"ui.picker.english" = "English";
+"ui.picker.zh_hans" = "简体中文";
+"ui.picker.cancel" = "取消";
+"language.page_title" = "语言";
+"language.instructions" = "选择这个插件设置页要使用的语言。";
+"language.current_format" = "当前选择：%@";
+"language.selected_format" = "[已选] %@";

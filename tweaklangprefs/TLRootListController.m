@@ -573,74 +573,174 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     return @"/";
 }
 
-- (NSArray *)scanInstalledBundles {
-    NSMutableArray *results = [NSMutableArray array];
-    NSMutableSet *seen = [NSMutableSet set];
+- (NSArray *)bundlePathsInDirectory:(NSString *)directoryPath recursive:(BOOL)recursive {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSString *root = [self jailbreakRoot];
-    NSDictionary *settingsLabels = [self settingsDisplayNamesByLookupKey];
+    BOOL isDir = NO;
+    if (![fm fileExistsAtPath:directoryPath isDirectory:&isDir] || !isDir) {
+        return @[];
+    }
 
-    NSArray *scanDirs = @[
-        @"Library/PreferenceBundles",
-        @"Library/Application Support",
-    ];
-
-    for (NSString *relDir in scanDirs) {
-        NSString *fullDir = [root stringByAppendingPathComponent:relDir];
-        NSArray *items = [fm contentsOfDirectoryAtPath:fullDir error:nil];
-        if (!items) continue;
-
+    NSMutableArray *bundlePaths = [NSMutableArray array];
+    if (!recursive) {
+        NSArray *items = [fm contentsOfDirectoryAtPath:directoryPath error:nil];
         for (NSString *item in items) {
             if (![item hasSuffix:@".bundle"]) continue;
 
-            NSString *bundleName = [item stringByDeletingPathExtension];
-            if ([bundleName isEqualToString:@"TweakLangPrefs"]) continue;
+            NSString *bundlePath = [directoryPath stringByAppendingPathComponent:item];
+            BOOL itemIsDir = NO;
+            if ([fm fileExistsAtPath:bundlePath isDirectory:&itemIsDir] && itemIsDir) {
+                [bundlePaths addObject:bundlePath];
+            }
+        }
+        return bundlePaths;
+    }
 
-            NSString *bundlePath = [fullDir stringByAppendingPathComponent:item];
-            BOOL isDir = NO;
-            if (![fm fileExistsAtPath:bundlePath isDirectory:&isDir] || !isDir) {
+    NSDirectoryEnumerator *enumerator = [fm enumeratorAtPath:directoryPath];
+    for (NSString *relativePath in enumerator) {
+        NSString *extension = [[relativePath pathExtension] lowercaseString];
+        if ([extension isEqualToString:@"app"] || [extension isEqualToString:@"framework"]) {
+            [enumerator skipDescendants];
+            continue;
+        }
+
+        if (![extension isEqualToString:@"bundle"]) {
+            continue;
+        }
+
+        NSString *bundlePath = [directoryPath stringByAppendingPathComponent:relativePath];
+        BOOL itemIsDir = NO;
+        if (![fm fileExistsAtPath:bundlePath isDirectory:&itemIsDir] || !itemIsDir) {
+            continue;
+        }
+
+        [bundlePaths addObject:bundlePath];
+        [enumerator skipDescendants];
+    }
+
+    return bundlePaths;
+}
+
+- (NSArray *)applicationSupportSearchRootsForJailbreakRoot:(NSString *)root {
+    NSMutableOrderedSet *roots = [NSMutableOrderedSet orderedSet];
+    NSFileManager *fm = [NSFileManager defaultManager];
+
+    NSString *globalApplicationSupportPath = [root
+        stringByAppendingPathComponent:@"Library/Application Support"];
+    BOOL isDir = NO;
+    if ([fm fileExistsAtPath:globalApplicationSupportPath isDirectory:&isDir] && isDir) {
+        [roots addObject:globalApplicationSupportPath];
+    }
+
+    NSString *appContainerRoot = @"/var/containers/Bundle/Application";
+    NSArray *appContainers = [fm contentsOfDirectoryAtPath:appContainerRoot error:nil];
+    for (NSString *containerName in appContainers) {
+        NSString *containerPath = [appContainerRoot stringByAppendingPathComponent:containerName];
+        BOOL containerIsDir = NO;
+        if (![fm fileExistsAtPath:containerPath isDirectory:&containerIsDir] || !containerIsDir) {
+            continue;
+        }
+
+        NSArray *items = [fm contentsOfDirectoryAtPath:containerPath error:nil];
+        for (NSString *item in items) {
+            if (![item hasPrefix:@".jbroot-"]) continue;
+
+            NSString *jbrootPath = [containerPath stringByAppendingPathComponent:item];
+            BOOL jbrootIsDir = NO;
+            if (![fm fileExistsAtPath:jbrootPath isDirectory:&jbrootIsDir] || !jbrootIsDir) {
                 continue;
             }
 
-            NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
-            NSString *bundleKey = bundleName;
-            if (bundleKey.length == 0 || [seen containsObject:bundleKey]) continue;
-
-            NSMutableArray *languages = [NSMutableArray array];
-            NSArray *contents = [fm contentsOfDirectoryAtPath:bundlePath error:nil];
-            for (NSString *sub in contents) {
-                if ([sub hasSuffix:@".lproj"] &&
-                    ![sub isEqualToString:@"Base.lproj"]) {
-                    [languages addObject:[sub stringByDeletingPathExtension]];
-                }
+            NSString *applicationSupportPath = [jbrootPath
+                stringByAppendingPathComponent:@"Library/Application Support"];
+            BOOL appSupportIsDir = NO;
+            if ([fm fileExistsAtPath:applicationSupportPath isDirectory:&appSupportIsDir] &&
+                appSupportIsDir) {
+                [roots addObject:applicationSupportPath];
             }
+        }
+    }
 
-            if (languages.count == 0) continue;
+    return [roots array];
+}
 
-            NSString *bundleDisplayName = TLBundleInfoDisplayName(bundle, bundleName);
-            NSString *displayName = nil;
-            for (NSString *lookupKey in TLLookupKeysForBundle(bundle, bundleName)) {
-                NSString *resolvedLabel = settingsLabels[lookupKey];
-                if (resolvedLabel.length > 0) {
-                    displayName = resolvedLabel;
-                    break;
-                }
-            }
-            if (displayName.length == 0) {
-                displayName = bundleDisplayName;
-            }
+- (NSDictionary *)bundleEntryForPath:(NSString *)bundlePath
+                      settingsLabels:(NSDictionary *)settingsLabels
+                      seenBundleKeys:(NSMutableSet *)seen {
+    NSString *bundleName = [[bundlePath lastPathComponent] stringByDeletingPathExtension];
+    if (bundleName.length == 0 || [bundleName isEqualToString:@"TweakLangPrefs"]) {
+        return nil;
+    }
 
-            [languages sortUsingSelector:@selector(caseInsensitiveCompare:)];
-            [seen addObject:bundleKey];
-            NSMutableDictionary *entry = [@{
-                @"name": displayName,
-                @"bundleKey": bundleKey,
-                @"path": bundlePath,
-                @"languages": languages,
-            } mutableCopy];
-            if (bundleDisplayName.length > 0 && ![bundleDisplayName isEqualToString:bundleKey]) {
-                entry[@"legacyKey"] = bundleDisplayName;
-            }
+    NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
+    NSString *bundleKey = bundleName;
+    if (bundleKey.length == 0 || [seen containsObject:bundleKey]) {
+        return nil;
+    }
+
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSMutableArray *languages = [NSMutableArray array];
+    NSArray *contents = [fm contentsOfDirectoryAtPath:bundlePath error:nil];
+    for (NSString *sub in contents) {
+        if ([sub hasSuffix:@".lproj"] &&
+            ![sub isEqualToString:@"Base.lproj"]) {
+            [languages addObject:[sub stringByDeletingPathExtension]];
+        }
+    }
+
+    if (languages.count == 0) {
+        return nil;
+    }
+
+    NSString *bundleDisplayName = TLBundleInfoDisplayName(bundle, bundleName);
+    NSString *displayName = nil;
+    for (NSString *lookupKey in TLLookupKeysForBundle(bundle, bundleName)) {
+        NSString *resolvedLabel = settingsLabels[lookupKey];
+        if (resolvedLabel.length > 0) {
+            displayName = resolvedLabel;
+            break;
+        }
+    }
+    if (displayName.length == 0) {
+        displayName = bundleDisplayName;
+    }
+
+    [languages sortUsingSelector:@selector(caseInsensitiveCompare:)];
+    [seen addObject:bundleKey];
+    NSMutableDictionary *entry = [@{
+        @"name": displayName,
+        @"bundleKey": bundleKey,
+        @"path": bundlePath,
+        @"languages": languages,
+    } mutableCopy];
+    if (bundleDisplayName.length > 0 && ![bundleDisplayName isEqualToString:bundleKey]) {
+        entry[@"legacyKey"] = bundleDisplayName;
+    }
+    return entry;
+}
+
+- (NSArray *)scanInstalledBundles {
+    NSMutableArray *results = [NSMutableArray array];
+    NSMutableSet *seen = [NSMutableSet set];
+    NSString *root = [self jailbreakRoot];
+    NSDictionary *settingsLabels = [self settingsDisplayNamesByLookupKey];
+
+    NSMutableOrderedSet *bundlePaths = [NSMutableOrderedSet orderedSet];
+    NSString *preferenceBundlesPath = [root
+        stringByAppendingPathComponent:@"Library/PreferenceBundles"];
+    [bundlePaths addObjectsFromArray:[self bundlePathsInDirectory:preferenceBundlesPath
+                                                        recursive:NO]];
+
+    for (NSString *applicationSupportRoot in
+         [self applicationSupportSearchRootsForJailbreakRoot:root]) {
+        [bundlePaths addObjectsFromArray:[self bundlePathsInDirectory:applicationSupportRoot
+                                                            recursive:YES]];
+    }
+
+    for (NSString *bundlePath in bundlePaths) {
+        NSDictionary *entry = [self bundleEntryForPath:bundlePath
+                                        settingsLabels:settingsLabels
+                                        seenBundleKeys:seen];
+        if (entry) {
             [results addObject:entry];
         }
     }

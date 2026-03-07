@@ -22,6 +22,67 @@ static NSBundle *TLPrefsBundle(void) {
     return [NSBundle bundleForClass:[TLRootListController class]];
 }
 
+static NSString *TLPrimaryBundleToken(NSString *value) {
+    if (value.length == 0) return nil;
+
+    NSString *token = [value lastPathComponent];
+    NSString *extension = [[token pathExtension] lowercaseString];
+    NSSet *knownExtensions = [NSSet setWithObjects:
+        @"bundle", @"framework", @"app", @"plist", nil];
+    if (extension.length > 0 && [knownExtensions containsObject:extension]) {
+        token = [token stringByDeletingPathExtension];
+    }
+
+    return token.length > 0 ? token : nil;
+}
+
+static NSString *TLNormalizedBundleKey(NSString *value) {
+    NSString *baseName = TLPrimaryBundleToken(value);
+    if (baseName.length == 0) return nil;
+
+    NSString *lowercase = [baseName lowercaseString];
+    NSMutableString *normalized = [NSMutableString stringWithCapacity:lowercase.length];
+    NSCharacterSet *allowed = [NSCharacterSet alphanumericCharacterSet];
+
+    for (NSUInteger i = 0; i < lowercase.length; i++) {
+        unichar c = [lowercase characterAtIndex:i];
+        if ([allowed characterIsMember:c]) {
+            [normalized appendFormat:@"%C", c];
+        }
+    }
+
+    if (normalized.length == 0) return nil;
+
+    NSArray *suffixes = @[
+        @"preferences",
+        @"preference",
+        @"settings",
+        @"setting",
+        @"localizations",
+        @"localization",
+        @"resources",
+        @"resource",
+        @"prefs",
+        @"pref",
+        @"bundle",
+    ];
+
+    BOOL changed = YES;
+    while (changed && normalized.length > 0) {
+        changed = NO;
+        for (NSString *suffix in suffixes) {
+            if ([normalized hasSuffix:suffix] && normalized.length > suffix.length) {
+                [normalized deleteCharactersInRange:
+                    NSMakeRange(normalized.length - suffix.length, suffix.length)];
+                changed = YES;
+                break;
+            }
+        }
+    }
+
+    return normalized.length > 0 ? normalized : nil;
+}
+
 static NSString *TLNormalizedLocalizationCode(NSString *value) {
     if (value.length == 0) return nil;
 
@@ -37,6 +98,124 @@ static NSString *TLNormalizedLocalizationCode(NSString *value) {
     }
 
     return normalized.length > 0 ? normalized : nil;
+}
+
+static NSString *TLApplicationSupportContainerName(NSString *path) {
+    if (path.length == 0) return nil;
+
+    NSRange range = [path rangeOfString:@"/Library/Application Support/"];
+    if (range.location == NSNotFound) {
+        return nil;
+    }
+
+    NSString *relativePath = [path substringFromIndex:NSMaxRange(range)];
+    NSArray *components = [relativePath pathComponents];
+    if (components.count < 2) {
+        return nil;
+    }
+
+    NSString *containerName = components.firstObject;
+    if (containerName.length == 0 || [containerName pathExtension].length > 0) {
+        return nil;
+    }
+
+    return containerName;
+}
+
+static void TLAddBundleLookupKeys(NSMutableOrderedSet *keys, NSString *value) {
+    NSString *primaryToken = TLPrimaryBundleToken(value);
+    if (primaryToken.length > 0) {
+        [keys addObject:primaryToken];
+    }
+
+    NSString *normalized = TLNormalizedBundleKey(value);
+    if (normalized.length > 0) {
+        [keys addObject:normalized];
+    }
+}
+
+static NSArray *TLLookupKeysForBundle(NSBundle *bundle, NSString *fallbackName) {
+    NSMutableOrderedSet *keys = [NSMutableOrderedSet orderedSet];
+    NSString *bundlePath = [bundle bundlePath];
+
+    TLAddBundleLookupKeys(keys, fallbackName);
+    TLAddBundleLookupKeys(keys, [bundlePath lastPathComponent]);
+    TLAddBundleLookupKeys(keys, TLApplicationSupportContainerName(bundlePath));
+
+    return [keys array];
+}
+
+static NSString *TLBundleInfoDisplayName(NSBundle *bundle, NSString *fallbackName) {
+    NSString *displayName = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+    if (displayName.length == 0) {
+        displayName = [bundle objectForInfoDictionaryKey:@"CFBundleName"];
+    }
+    if (displayName.length == 0) {
+        displayName = fallbackName;
+    }
+    return displayName;
+}
+
+static NSString *TLPreferenceKeyForName(NSString *name) {
+    if (name.length == 0) return nil;
+    return [LANG_KEY_PREFIX stringByAppendingString:name];
+}
+
+static NSString *TLReadStringPreference(NSString *key) {
+    if (key.length == 0) return nil;
+
+    CFPropertyListRef value = CFPreferencesCopyAppValue(
+        (__bridge CFStringRef)key,
+        (__bridge CFStringRef)PREF_DOMAIN);
+    if (!value) {
+        return nil;
+    }
+
+    if (CFGetTypeID(value) != CFStringGetTypeID()) {
+        CFRelease(value);
+        return nil;
+    }
+
+    NSString *stringValue = CFBridgingRelease(value);
+    return stringValue.length > 0 ? stringValue : nil;
+}
+
+static NSString *TLReadLanguageOverrideValue(NSString *bundleKey, NSString *legacyKey) {
+    NSString *value = TLReadStringPreference(TLPreferenceKeyForName(bundleKey));
+    if (value.length > 0) {
+        return value;
+    }
+
+    if (legacyKey.length > 0 && ![legacyKey isEqualToString:bundleKey]) {
+        value = TLReadStringPreference(TLPreferenceKeyForName(legacyKey));
+        if (value.length > 0) {
+            return value;
+        }
+    }
+
+    return @"system";
+}
+
+static void TLWriteLanguageOverrideValue(NSString *value, NSString *bundleKey, NSString *legacyKey) {
+    NSString *primaryKey = TLPreferenceKeyForName(bundleKey);
+    NSString *legacyPreferenceKey = TLPreferenceKeyForName(legacyKey);
+    BOOL resetToDefault = (value.length == 0 || [value isEqualToString:@"system"]);
+
+    if (primaryKey.length > 0) {
+        CFPreferencesSetAppValue(
+            (__bridge CFStringRef)primaryKey,
+            resetToDefault ? NULL : (__bridge CFStringRef)value,
+            (__bridge CFStringRef)PREF_DOMAIN);
+    }
+
+    if (legacyPreferenceKey.length > 0 && ![legacyPreferenceKey isEqualToString:primaryKey]) {
+        CFPreferencesSetAppValue(
+            (__bridge CFStringRef)legacyPreferenceKey,
+            NULL,
+            (__bridge CFStringRef)PREF_DOMAIN);
+    }
+
+    CFPreferencesAppSynchronize((__bridge CFStringRef)PREF_DOMAIN);
 }
 
 static NSString *TLPreferredLocalizationDirectory(NSBundle *bundle, NSString *language) {
@@ -137,28 +316,6 @@ static NSLocale *TLDisplayLocale(void) {
     return [[NSLocale alloc] initWithLocaleIdentifier:language];
 }
 
-static NSString *TLReadLanguageOverrideValue(NSString *name) {
-    if (name.length == 0) {
-        return @"system";
-    }
-
-    NSString *key = [LANG_KEY_PREFIX stringByAppendingString:name];
-    CFPropertyListRef value = CFPreferencesCopyAppValue(
-        (__bridge CFStringRef)key,
-        (__bridge CFStringRef)PREF_DOMAIN);
-    if (!value) {
-        return @"system";
-    }
-
-    if (CFGetTypeID(value) != CFStringGetTypeID()) {
-        CFRelease(value);
-        return @"system";
-    }
-
-    NSString *language = CFBridgingRelease(value);
-    return language.length > 0 ? language : @"system";
-}
-
 static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *locale) {
     if (value.length == 0 || [value isEqualToString:@"system"]) {
         return TLLocalizedString(@"system_default", @"System Default");
@@ -250,6 +407,8 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 
     for (NSDictionary *info in bundles) {
         NSString *name = info[@"name"];
+        NSString *bundleKey = info[@"bundleKey"];
+        NSString *legacyKey = info[@"legacyKey"];
         NSArray *languages = info[@"languages"];
 
         NSMutableArray *validValues = [NSMutableArray arrayWithObject:@"system"];
@@ -270,7 +429,11 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
             edit:Nil];
 
         [spec setProperty:PREF_DOMAIN forKey:@"defaults"];
-        [spec setProperty:[LANG_KEY_PREFIX stringByAppendingString:name]
+        [spec setProperty:bundleKey forKey:@"bundleKey"];
+        if (legacyKey.length > 0 && ![legacyKey isEqualToString:bundleKey]) {
+            [spec setProperty:legacyKey forKey:@"legacyKey"];
+        }
+        [spec setProperty:TLPreferenceKeyForName(bundleKey)
                    forKey:@"key"];
         [spec setProperty:@"system" forKey:@"default"];
         [spec setProperty:validValues forKey:@"validValues"];
@@ -373,29 +536,18 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 #pragma mark - Preference I/O
 
 - (id)readPreferenceValue:(PSSpecifier *)specifier {
-    NSString *key = [specifier propertyForKey:@"key"];
-    if (key.length == 0) {
-        return [specifier propertyForKey:@"default"] ?: @"system";
-    }
-
-    CFPropertyListRef value = CFPreferencesCopyAppValue(
-        (__bridge CFStringRef)key,
-        (__bridge CFStringRef)PREF_DOMAIN);
-    if (!value) {
-        return [specifier propertyForKey:@"default"] ?: @"system";
-    }
-
-    if (CFGetTypeID(value) != CFStringGetTypeID()) {
-        CFRelease(value);
-        return [specifier propertyForKey:@"default"] ?: @"system";
-    }
-
-    NSString *stringValue = CFBridgingRelease(value);
-    return stringValue.length > 0 ? stringValue : ([specifier propertyForKey:@"default"] ?: @"system");
+    NSString *bundleKey = [specifier propertyForKey:@"bundleKey"];
+    NSString *legacyKey = [specifier propertyForKey:@"legacyKey"];
+    NSString *value = TLReadLanguageOverrideValue(bundleKey, legacyKey);
+    return value.length > 0 ? value : ([specifier propertyForKey:@"default"] ?: @"system");
 }
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
-    [super setPreferenceValue:value specifier:specifier];
+    NSString *bundleKey = [specifier propertyForKey:@"bundleKey"];
+    NSString *legacyKey = [specifier propertyForKey:@"legacyKey"];
+    NSString *stringValue = [value isKindOfClass:[NSString class]] ? value : @"system";
+
+    TLWriteLanguageOverrideValue(stringValue, bundleKey, legacyKey);
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),
         PREF_NOTIFICATION, NULL, NULL, YES);
@@ -425,6 +577,7 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     NSMutableSet *seen = [NSMutableSet set];
     NSFileManager *fm = [NSFileManager defaultManager];
     NSString *root = [self jailbreakRoot];
+    NSDictionary *settingsLabels = [self settingsDisplayNamesByLookupKey];
 
     NSArray *scanDirs = @[
         @"Library/PreferenceBundles",
@@ -449,14 +602,8 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
             }
 
             NSBundle *bundle = [NSBundle bundleWithPath:bundlePath];
-            NSString *displayName = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
-            if (displayName.length == 0) {
-                displayName = [bundle objectForInfoDictionaryKey:@"CFBundleName"];
-            }
-            if (displayName.length == 0) {
-                displayName = bundleName;
-            }
-            if ([seen containsObject:displayName]) continue;
+            NSString *bundleKey = bundleName;
+            if (bundleKey.length == 0 || [seen containsObject:bundleKey]) continue;
 
             NSMutableArray *languages = [NSMutableArray array];
             NSArray *contents = [fm contentsOfDirectoryAtPath:bundlePath error:nil];
@@ -469,13 +616,47 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 
             if (languages.count == 0) continue;
 
+            NSString *bundleDisplayName = TLBundleInfoDisplayName(bundle, bundleName);
+            NSString *displayName = nil;
+            for (NSString *lookupKey in TLLookupKeysForBundle(bundle, bundleName)) {
+                NSString *resolvedLabel = settingsLabels[lookupKey];
+                if (resolvedLabel.length > 0) {
+                    displayName = resolvedLabel;
+                    break;
+                }
+            }
+            if (displayName.length == 0) {
+                displayName = bundleDisplayName;
+            }
+
             [languages sortUsingSelector:@selector(caseInsensitiveCompare:)];
-            [seen addObject:displayName];
-            [results addObject:@{
+            [seen addObject:bundleKey];
+            NSMutableDictionary *entry = [@{
                 @"name": displayName,
+                @"bundleKey": bundleKey,
                 @"path": bundlePath,
                 @"languages": languages,
-            }];
+            } mutableCopy];
+            if (bundleDisplayName.length > 0 && ![bundleDisplayName isEqualToString:bundleKey]) {
+                entry[@"legacyKey"] = bundleDisplayName;
+            }
+            [results addObject:entry];
+        }
+    }
+
+    NSMutableDictionary *nameCounts = [NSMutableDictionary dictionary];
+    for (NSDictionary *entry in results) {
+        NSString *displayName = entry[@"name"];
+        if (displayName.length == 0) continue;
+        NSNumber *count = nameCounts[displayName] ?: @0;
+        nameCounts[displayName] = @(count.integerValue + 1);
+    }
+
+    for (NSMutableDictionary *entry in results) {
+        NSString *displayName = entry[@"name"];
+        if ([nameCounts[displayName] integerValue] > 1) {
+            entry[@"name"] = [NSString stringWithFormat:@"%@ (%@)",
+                displayName, entry[@"bundleKey"]];
         }
     }
 
@@ -502,7 +683,8 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 
     for (NSDictionary *info in bundles) {
         NSMutableDictionary *entry = [info mutableCopy];
-        entry[@"currentValue"] = TLReadLanguageOverrideValue(info[@"name"]);
+        entry[@"currentValue"] = TLReadLanguageOverrideValue(
+            info[@"bundleKey"], info[@"legacyKey"]);
         [results addObject:entry];
     }
 
@@ -518,6 +700,62 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
         }];
 
     return results;
+}
+
+- (NSDictionary *)settingsDisplayNamesByLookupKey {
+    NSMutableDictionary *labels = [NSMutableDictionary dictionary];
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSString *preferencesPath = [[self jailbreakRoot]
+        stringByAppendingPathComponent:@"Library/PreferenceLoader/Preferences"];
+    NSArray *items = [fm contentsOfDirectoryAtPath:preferencesPath error:nil];
+
+    for (NSString *item in items) {
+        if (![[[item pathExtension] lowercaseString] isEqualToString:@"plist"]) {
+            continue;
+        }
+
+        NSString *plistPath = [preferencesPath stringByAppendingPathComponent:item];
+        NSDictionary *plist = [NSDictionary dictionaryWithContentsOfFile:plistPath];
+        if (![plist isKindOfClass:[NSDictionary class]]) {
+            continue;
+        }
+
+        NSMutableArray *entries = [NSMutableArray array];
+        id rawEntry = plist[@"entry"];
+        if ([rawEntry isKindOfClass:[NSDictionary class]]) {
+            [entries addObject:rawEntry];
+        } else if ([rawEntry isKindOfClass:[NSArray class]]) {
+            for (id candidate in (NSArray *)rawEntry) {
+                if ([candidate isKindOfClass:[NSDictionary class]]) {
+                    [entries addObject:candidate];
+                }
+            }
+        }
+
+        NSString *fallbackBundleName = [item stringByDeletingPathExtension];
+        for (NSDictionary *entry in entries) {
+            NSString *label = [entry[@"label"] isKindOfClass:[NSString class]]
+                ? entry[@"label"]
+                : nil;
+            NSString *bundleReference = [entry[@"bundle"] isKindOfClass:[NSString class]]
+                ? entry[@"bundle"]
+                : fallbackBundleName;
+            if (label.length == 0 || bundleReference.length == 0) {
+                continue;
+            }
+
+            NSMutableOrderedSet *lookupKeys = [NSMutableOrderedSet orderedSet];
+            TLAddBundleLookupKeys(lookupKeys, bundleReference);
+            TLAddBundleLookupKeys(lookupKeys, fallbackBundleName);
+            for (NSString *lookupKey in lookupKeys) {
+                if (lookupKey.length > 0 && !labels[lookupKey]) {
+                    labels[lookupKey] = label;
+                }
+            }
+        }
+    }
+
+    return labels;
 }
 
 #pragma mark - Language Display Names
@@ -571,7 +809,9 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     NSMutableArray *specs = [NSMutableArray array];
     NSArray *values = [self.specifier propertyForKey:@"validValues"] ?: @[@"system"];
     NSArray *titles = [self.specifier propertyForKey:@"validTitles"] ?: @[TLLocalizedString(@"system_default", @"System Default")];
-    NSString *currentValue = [self readPreferenceValue:self.specifier];
+    NSString *currentValue = TLReadLanguageOverrideValue(
+        [self.specifier propertyForKey:@"bundleKey"],
+        [self.specifier propertyForKey:@"legacyKey"]);
 
     if (currentValue.length == 0) {
         currentValue = [self.specifier propertyForKey:@"default"] ?: @"system";
@@ -609,7 +849,9 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 }
 - (void)selectLanguage:(PSSpecifier *)specifier {
     NSString *value = [specifier propertyForKey:@"value"] ?: @"system";
-    [super setPreferenceValue:value specifier:self.specifier];
+    TLWriteLanguageOverrideValue(value,
+        [self.specifier propertyForKey:@"bundleKey"],
+        [self.specifier propertyForKey:@"legacyKey"]);
     CFNotificationCenterPostNotification(
         CFNotificationCenterGetDarwinNotifyCenter(),
         PREF_NOTIFICATION, NULL, NULL, YES);

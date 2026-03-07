@@ -83,6 +83,39 @@ static NSString *normalizedLocalizationCode(NSString *value) {
     return normalized.length > 0 ? normalized : nil;
 }
 
+static NSString *applicationSupportContainerName(NSString *path) {
+    if (path.length == 0) return nil;
+
+    NSRange range = [path rangeOfString:@"/Library/Application Support/"];
+    if (range.location == NSNotFound) {
+        return nil;
+    }
+
+    NSString *relativePath = [path substringFromIndex:NSMaxRange(range)];
+    NSArray *components = [relativePath pathComponents];
+    if (components.count < 2) {
+        return nil;
+    }
+
+    NSString *containerName = components.firstObject;
+    if (containerName.length == 0 || [containerName pathExtension].length > 0) {
+        return nil;
+    }
+
+    return containerName;
+}
+
+static NSString *bundlePathForCFBundle(CFBundleRef bundle) {
+    if (!bundle) return nil;
+
+    CFURLRef bundleURL = CFBundleCopyBundleURL(bundle);
+    if (!bundleURL) return nil;
+
+    NSString *bundlePath = CFBridgingRelease(CFURLCopyFileSystemPath(bundleURL, kCFURLPOSIXPathStyle));
+    CFRelease(bundleURL);
+    return [bundlePath isKindOfClass:[NSString class]] ? bundlePath : nil;
+}
+
 static void addBundleCandidate(NSMutableOrderedSet *candidates, NSString *value) {
     if (value.length == 0) return;
 
@@ -102,6 +135,7 @@ static NSArray *bundleCandidates(NSBundle *bundle) {
     NSString *bundlePath = [bundle bundlePath];
 
     addBundleCandidate(candidates, [bundlePath lastPathComponent]);
+    addBundleCandidate(candidates, applicationSupportContainerName(bundlePath));
 
     NSString *bundleIdentifier = [bundle bundleIdentifier];
     if (bundleIdentifier.length > 0) {
@@ -365,6 +399,39 @@ static void preferencesChanged(CFNotificationCenterRef center,
 }
 
 %end
+
+%hookf(CFStringRef, CFBundleCopyLocalizedString, CFBundleRef bundle, CFStringRef key, CFStringRef value, CFStringRef tableName) {
+    if (!bundle || !key) {
+        return %orig;
+    }
+
+    NSString *bundlePath = bundlePathForCFBundle(bundle);
+    if (bundlePath.length == 0 || !isTargetBundle(bundlePath)) {
+        return %orig;
+    }
+
+    NSBundle *nsBundle = [NSBundle bundleWithPath:bundlePath];
+    if (!nsBundle) {
+        return %orig;
+    }
+
+    NSString *language = targetLanguageForBundle(nsBundle);
+    if (language.length == 0) {
+        return %orig;
+    }
+
+    NSString *keyString = (__bridge NSString *)key;
+    NSString *tableString = tableName ? (__bridge NSString *)tableName : nil;
+    for (NSString *table in tableCandidates(nsBundle, tableString)) {
+        NSDictionary *strings = localizedStrings(nsBundle, language, table);
+        NSString *result = strings[keyString];
+        if (result.length > 0) {
+            return (CFStringRef)CFRetain((__bridge CFTypeRef)result);
+        }
+    }
+
+    return %orig;
+}
 
 #pragma mark - Constructor
 

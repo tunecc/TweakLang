@@ -10,6 +10,14 @@
 @interface TLLanguageListController : PSListController
 @end
 
+@interface TLLanguageValueCell : PSTableCell
+@end
+
+@interface TLRootListController () {
+    NSArray *_cachedBundles;
+}
+@end
+
 static NSBundle *TLPrefsBundle(void) {
     return [NSBundle bundleForClass:[TLRootListController class]];
 }
@@ -129,10 +137,80 @@ static NSLocale *TLDisplayLocale(void) {
     return [[NSLocale alloc] initWithLocaleIdentifier:language];
 }
 
+static NSString *TLReadLanguageOverrideValue(NSString *name) {
+    if (name.length == 0) {
+        return @"system";
+    }
+
+    NSString *key = [LANG_KEY_PREFIX stringByAppendingString:name];
+    CFPropertyListRef value = CFPreferencesCopyAppValue(
+        (__bridge CFStringRef)key,
+        (__bridge CFStringRef)PREF_DOMAIN);
+    if (!value) {
+        return @"system";
+    }
+
+    if (CFGetTypeID(value) != CFStringGetTypeID()) {
+        CFRelease(value);
+        return @"system";
+    }
+
+    NSString *language = CFBridgingRelease(value);
+    return language.length > 0 ? language : @"system";
+}
+
+static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *locale) {
+    if (value.length == 0 || [value isEqualToString:@"system"]) {
+        return TLLocalizedString(@"system_default", @"System Default");
+    }
+
+    NSString *normalized = [value stringByReplacingOccurrencesOfString:@"_"
+                                                            withString:@"-"];
+    NSString *name = [locale displayNameForKey:NSLocaleIdentifier value:normalized];
+    if (name && ![name isEqualToString:value] && ![name isEqualToString:normalized]) {
+        return [NSString stringWithFormat:@"%@ (%@)", name, value];
+    }
+
+    return value;
+}
+
+@implementation TLLanguageValueCell
+
+- (instancetype)initWithStyle:(UITableViewCellStyle)style
+              reuseIdentifier:(NSString *)reuseIdentifier
+                    specifier:(PSSpecifier *)specifier {
+    self = [super initWithStyle:UITableViewCellStyleValue1
+                reuseIdentifier:reuseIdentifier
+                      specifier:specifier];
+    if (self) {
+        self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+        self.detailTextLabel.textAlignment = NSTextAlignmentRight;
+        self.detailTextLabel.adjustsFontSizeToFitWidth = YES;
+        self.detailTextLabel.minimumScaleFactor = 0.8;
+    }
+    return self;
+}
+
+- (void)refreshCellContentsWithSpecifier:(PSSpecifier *)specifier {
+    [super refreshCellContentsWithSpecifier:specifier];
+
+    self.textLabel.text = specifier.name;
+
+    NSString *value = [specifier performGetter];
+    if (![value isKindOfClass:[NSString class]] || value.length == 0) {
+        value = [specifier propertyForKey:@"default"] ?: @"system";
+    }
+
+    self.detailTextLabel.text = TLDisplayTitleForLanguageValue(value, TLDisplayLocale());
+    self.accessoryType = UITableViewCellAccessoryDisclosureIndicator;
+}
+
+@end
+
 @implementation TLRootListController
 
 - (NSString *)title {
-    return TLLocalizedString(@"app.title", @"TweakLang");
+    return @"";
 }
 
 - (void)viewDidLoad {
@@ -152,13 +230,7 @@ static NSLocale *TLDisplayLocale(void) {
 - (NSMutableArray *)buildSpecifiers {
     NSMutableArray *specs = [NSMutableArray array];
 
-    PSSpecifier *header = [PSSpecifier groupSpecifierWithName:TLLocalizedString(@"app.title", @"TweakLang")];
-    [header setProperty:TLLocalizedString(@"header.footer",
-        @"Override the display language for individual jailbreak tweaks.\nChanges take effect when you re-enter a tweak's settings page.")
-                 forKey:@"footerText"];
-    [specs addObject:header];
-
-    NSArray *bundles = [self scanInstalledBundles];
+    NSArray *bundles = [self displayBundles];
 
     if (bundles.count == 0) {
         PSSpecifier *empty = [PSSpecifier groupSpecifierWithName:
@@ -203,6 +275,21 @@ static NSLocale *TLDisplayLocale(void) {
         [spec setProperty:@"system" forKey:@"default"];
         [spec setProperty:validValues forKey:@"validValues"];
         [spec setProperty:validTitles forKey:@"validTitles"];
+        [spec setProperty:validValues forKey:@"values"];
+        [spec setProperty:validTitles forKey:@"titles"];
+        [spec setProperty:validTitles forKey:@"shortTitles"];
+        NSMutableDictionary *titleDictionary = [NSMutableDictionary dictionary];
+        NSUInteger count = MIN(validValues.count, validTitles.count);
+        for (NSUInteger index = 0; index < count; index++) {
+            NSString *value = validValues[index];
+            NSString *title = validTitles[index];
+            if (value.length > 0 && title.length > 0) {
+                titleDictionary[value] = title;
+            }
+        }
+        [spec setProperty:titleDictionary forKey:@"titleDictionary"];
+        [spec setProperty:titleDictionary forKey:@"shortTitleDictionary"];
+        [spec setProperty:[TLLanguageValueCell class] forKey:PSCellClassKey];
 
         [specs addObject:spec];
     }
@@ -213,17 +300,25 @@ static NSLocale *TLDisplayLocale(void) {
 - (void)viewWillAppear:(BOOL)animated {
     [super viewWillAppear:animated];
     [self updateLocalizedChrome];
-    _specifiers = nil;
-    [self reloadSpecifiers];
+    if (_cachedBundles) {
+        _specifiers = nil;
+        [self reloadSpecifiers];
+    }
 }
 
 - (void)updateLocalizedChrome {
-    self.title = [self title];
-    self.navigationItem.rightBarButtonItem = [[UIBarButtonItem alloc]
+    self.title = @"";
+    self.navigationItem.title = @"";
+    UIBarButtonItem *languageButton = [[UIBarButtonItem alloc]
         initWithTitle:TLLocalizedString(@"ui.button", @"Lang")
                 style:UIBarButtonItemStylePlain
                target:self
                action:@selector(showInterfaceLanguagePicker)];
+    UIBarButtonItem *refreshButton = [[UIBarButtonItem alloc]
+        initWithBarButtonSystemItem:UIBarButtonSystemItemRefresh
+                             target:self
+                             action:@selector(refreshBundleList)];
+    self.navigationItem.rightBarButtonItems = @[languageButton, refreshButton];
 }
 
 - (void)showInterfaceLanguagePicker {
@@ -269,7 +364,35 @@ static NSLocale *TLDisplayLocale(void) {
     [self reloadSpecifiers];
 }
 
+- (void)refreshBundleList {
+    _cachedBundles = nil;
+    _specifiers = nil;
+    [self reloadSpecifiers];
+}
+
 #pragma mark - Preference I/O
+
+- (id)readPreferenceValue:(PSSpecifier *)specifier {
+    NSString *key = [specifier propertyForKey:@"key"];
+    if (key.length == 0) {
+        return [specifier propertyForKey:@"default"] ?: @"system";
+    }
+
+    CFPropertyListRef value = CFPreferencesCopyAppValue(
+        (__bridge CFStringRef)key,
+        (__bridge CFStringRef)PREF_DOMAIN);
+    if (!value) {
+        return [specifier propertyForKey:@"default"] ?: @"system";
+    }
+
+    if (CFGetTypeID(value) != CFStringGetTypeID()) {
+        CFRelease(value);
+        return [specifier propertyForKey:@"default"] ?: @"system";
+    }
+
+    NSString *stringValue = CFBridgingRelease(value);
+    return stringValue.length > 0 ? stringValue : ([specifier propertyForKey:@"default"] ?: @"system");
+}
 
 - (void)setPreferenceValue:(id)value specifier:(PSSpecifier *)specifier {
     [super setPreferenceValue:value specifier:specifier];
@@ -318,7 +441,6 @@ static NSLocale *TLDisplayLocale(void) {
 
             NSString *bundleName = [item stringByDeletingPathExtension];
             if ([bundleName isEqualToString:@"TweakLangPrefs"]) continue;
-            if ([seen containsObject:bundleName]) continue;
 
             NSString *bundlePath = [fullDir stringByAppendingPathComponent:item];
             BOOL isDir = NO;
@@ -334,6 +456,7 @@ static NSLocale *TLDisplayLocale(void) {
             if (displayName.length == 0) {
                 displayName = bundleName;
             }
+            if ([seen containsObject:displayName]) continue;
 
             NSMutableArray *languages = [NSMutableArray array];
             NSArray *contents = [fm contentsOfDirectoryAtPath:bundlePath error:nil];
@@ -347,7 +470,7 @@ static NSLocale *TLDisplayLocale(void) {
             if (languages.count == 0) continue;
 
             [languages sortUsingSelector:@selector(caseInsensitiveCompare:)];
-            [seen addObject:bundleName];
+            [seen addObject:displayName];
             [results addObject:@{
                 @"name": displayName,
                 @"path": bundlePath,
@@ -358,6 +481,38 @@ static NSLocale *TLDisplayLocale(void) {
 
     [results sortUsingComparator:
         ^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            return [a[@"name"] compare:b[@"name"]
+                               options:NSCaseInsensitiveSearch];
+        }];
+
+    return results;
+}
+
+- (NSArray *)cachedBundles {
+    if (!_cachedBundles) {
+        _cachedBundles = [[self scanInstalledBundles] copy];
+    }
+
+    return _cachedBundles ?: @[];
+}
+
+- (NSArray *)displayBundles {
+    NSArray *bundles = [self cachedBundles];
+    NSMutableArray *results = [NSMutableArray arrayWithCapacity:bundles.count];
+
+    for (NSDictionary *info in bundles) {
+        NSMutableDictionary *entry = [info mutableCopy];
+        entry[@"currentValue"] = TLReadLanguageOverrideValue(info[@"name"]);
+        [results addObject:entry];
+    }
+
+    [results sortUsingComparator:
+        ^NSComparisonResult(NSDictionary *a, NSDictionary *b) {
+            BOOL aCustomized = ![a[@"currentValue"] isEqualToString:@"system"];
+            BOOL bCustomized = ![b[@"currentValue"] isEqualToString:@"system"];
+            if (aCustomized != bCustomized) {
+                return aCustomized ? NSOrderedAscending : NSOrderedDescending;
+            }
             return [a[@"name"] compare:b[@"name"]
                                options:NSCaseInsensitiveSearch];
         }];

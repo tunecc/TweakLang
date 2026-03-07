@@ -433,6 +433,7 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
         if (legacyKey.length > 0 && ![legacyKey isEqualToString:bundleKey]) {
             [spec setProperty:legacyKey forKey:@"legacyKey"];
         }
+        [spec setProperty:info[@"path"] forKey:@"bundlePath"];
         [spec setProperty:TLPreferenceKeyForName(bundleKey)
                    forKey:@"key"];
         [spec setProperty:@"system" forKey:@"default"];
@@ -809,6 +810,7 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     NSMutableArray *specs = [NSMutableArray array];
     NSArray *values = [self.specifier propertyForKey:@"validValues"] ?: @[@"system"];
     NSArray *titles = [self.specifier propertyForKey:@"validTitles"] ?: @[TLLocalizedString(@"system_default", @"System Default")];
+    NSString *bundlePath = [self.specifier propertyForKey:@"bundlePath"];
     NSString *currentValue = TLReadLanguageOverrideValue(
         [self.specifier propertyForKey:@"bundleKey"],
         [self.specifier propertyForKey:@"legacyKey"]);
@@ -845,8 +847,73 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
         [specs addObject:spec];
     }
 
+    if (bundlePath.length > 0) {
+        PSSpecifier *toolsGroup = [PSSpecifier groupSpecifierWithName:
+            TLLocalizedString(@"filza.group_title", @"Folder")];
+        [toolsGroup setProperty:TLLocalizedString(@"filza.group_footer",
+            @"Open this tweak's bundle folder in Filza.")
+                        forKey:@"footerText"];
+        [specs addObject:toolsGroup];
+
+        PSSpecifier *filzaButton = [PSSpecifier preferenceSpecifierNamed:
+            TLLocalizedString(@"filza.open_button", @"Open in Filza")
+            target:self
+            set:NULL
+            get:NULL
+            detail:Nil
+            cell:PSButtonCell
+            edit:Nil];
+        filzaButton.buttonAction = @selector(openBundleFolderInFilza:);
+        [filzaButton setProperty:bundlePath forKey:@"bundlePath"];
+        [specs addObject:filzaButton];
+    }
+
     return specs;
 }
+
+- (void)openBundleFolderInFilza:(PSSpecifier *)specifier {
+    NSString *bundlePath = [specifier propertyForKey:@"bundlePath"];
+    if (bundlePath.length == 0) {
+        return;
+    }
+
+    NSString *encodedPath = [bundlePath stringByAddingPercentEncodingWithAllowedCharacters:
+        [NSCharacterSet URLPathAllowedCharacterSet]];
+    if (encodedPath.length == 0) {
+        encodedPath = bundlePath;
+    }
+
+    NSURL *url = [NSURL URLWithString:[@"filza://view" stringByAppendingString:encodedPath]];
+    if (!url) {
+        [self presentFilzaUnavailableAlert];
+        return;
+    }
+
+    UIApplication *application = [UIApplication sharedApplication];
+    [application openURL:url
+                 options:@{}
+       completionHandler:^(BOOL success) {
+           if (!success) {
+               dispatch_async(dispatch_get_main_queue(), ^{
+                   [self presentFilzaUnavailableAlert];
+               });
+           }
+       }];
+}
+
+- (void)presentFilzaUnavailableAlert {
+    UIAlertController *alert = [UIAlertController alertControllerWithTitle:
+        TLLocalizedString(@"filza.unavailable_title", @"Filza Unavailable")
+        message:TLLocalizedString(@"filza.unavailable_message",
+            @"Couldn't open Filza. Make sure Filza is installed and its URL scheme is enabled.")
+        preferredStyle:UIAlertControllerStyleAlert];
+    [alert addAction:[UIAlertAction actionWithTitle:
+        TLLocalizedString(@"filza.unavailable_confirm", @"OK")
+        style:UIAlertActionStyleDefault
+        handler:nil]];
+    [self presentViewController:alert animated:YES completion:nil];
+}
+
 - (void)selectLanguage:(PSSpecifier *)specifier {
     NSString *value = [specifier propertyForKey:@"value"] ?: @"system";
     TLWriteLanguageOverrideValue(value,

@@ -15,3 +15,9 @@
 "language.instructions" = "Choose which localization this tweak's settings page should use.";
 "language.current_format" = "Current selection: %@";
 "language.selected_format" = "[Selected] %@";
+"filza.group_title" = "Folder";
+"filza.group_footer" = "Open this tweak's bundle folder in Filza.";
+"filza.open_button" = "Open in Filza";
+"filza.unavailable_title" = "Filza Unavailable";
+"filza.unavailable_message" = "Couldn't open Filza. Make sure Filza is installed and its URL scheme is enabled.";
+"filza.unavailable_confirm" = "OK";

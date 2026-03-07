@@ -15,3 +15,9 @@
 "language.instructions" = "选择这个插件设置页要使用的语言。";
 "language.current_format" = "当前选择：%@";
 "language.selected_format" = "[已选] %@";
+"filza.group_title" = "文件夹";
+"filza.group_footer" = "在 Filza 中打开这个插件的 bundle 文件夹。";
+"filza.open_button" = "用 Filza 打开";
+"filza.unavailable_title" = "无法打开 Filza";
+"filza.unavailable_message" = "没有成功打开 Filza。请确认已安装 Filza，并且当前版本支持 URL Scheme。";
+"filza.unavailable_confirm" = "好的";

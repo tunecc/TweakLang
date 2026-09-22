@@ -12,7 +12,12 @@ static NSDictionary *bundleLanguageMap = nil;
 static NSDictionary *bundleLanguageAliasMap = nil;
 static NSCache *stringsCache = nil;
 
-// 适配器型覆盖的查找表：镜像路径中的 "<bundle>.bundle/" 标记 -> 用户选定的语言。
+// 适配器型覆盖的查找表：镜像路径中的 "<bundle>.bundle/" 标记 -> @[拦截点, 已过滤的语言]。
+// 语言必须在这里就按 adapterSupportsLanguage 过滤完再存进去，不能等 hook 里再读一次
+// bundleLanguageMap：loadPreferences() 先替换偏好映射、最后才替换本表，两次替换都跑在
+// Darwin 通知线程上；hook 若现场读映射，就可能在这个窗口内拿到适配器未声明的语言
+// （手改 plist 写入 fr / zh-Hant 即可造出），而那按规格应当 %orig。
+// 数组整体被字典 retain，语言串的生命周期由它兜住，不必依赖外层映射。
 // 只有在用户真的为某个适配器 bundle 选了非 system 语言时才有条目，为空时 hook 直接 %orig。
 static NSDictionary *adapterImageLanguageMap = nil;
 
@@ -346,15 +351,19 @@ static void rebuildAdapterImageLanguageMap() {
 
         NSString *marker = TLAdapterImageMarker(entry);
         if (marker.length == 0) continue;
-        imageMap[marker] = language;
+        imageMap[marker] = @[ @(entry->intercept), language ];
     }
 
     adapterImageLanguageMap = [imageMap copy];
 }
 
 // address 必须是 hook 方法体里直接取得的 __builtin_return_address(0)，
-// 也就是调用 +[NSLocale preferredLanguages] 的那条指令的返回地址。
-static NSString *adapterLanguageForCallerAddress(void *address) {
+// 也就是调用目标本地化接口的那条指令的返回地址。
+// intercept 是当前这个 hook 对应的拦截点；条目声明了别的拦截点就一律 %orig，
+// 否则 Hello 键盘侠 的 NSLocale 判定会被 STTool 镜像反过来改写，反之亦然。
+// 语言在 rebuildAdapterImageLanguageMap() 里就已按 adapterSupportsLanguage 过滤，
+// 这里只做镜像与拦截点匹配，不再读偏好映射。
+static NSString *adapterLanguageForCallerAddress(void *address, TLAdapterIntercept intercept) {
     if (adapterImageLanguageMap.count == 0) return nil;
     if (address == NULL) return nil;
 
@@ -366,9 +375,16 @@ static NSString *adapterLanguageForCallerAddress(void *address) {
     if (imagePath.length == 0) return nil;
 
     for (NSString *marker in adapterImageLanguageMap) {
-        if ([imagePath containsString:marker]) {
-            return adapterImageLanguageMap[marker];
-        }
+        if (![imagePath containsString:marker]) continue;
+
+        NSArray *cached = adapterImageLanguageMap[marker];
+        if (![cached isKindOfClass:[NSArray class]] || cached.count != 2) continue;
+        // 拦截点不匹配：跳过这个标记继续看下一个，而不是直接放弃，避免同一条镜像路径上出现
+        // 两个标记时误判成「无命中」。
+        if ([cached[0] unsignedIntegerValue] != (NSUInteger)intercept) continue;
+
+        NSString *language = cached[1];
+        return [language isKindOfClass:[NSString class]] ? language : nil;
     }
 
     return nil;
@@ -443,6 +459,13 @@ static void preferencesChanged(CFNotificationCenterRef center,
 - (NSArray *)preferredLocalizations {
     NSString *lang = targetLanguageForBundle(self);
     if (lang) return @[lang];
+
+    // 资源型覆盖判的是 self 是不是目标 bundle；适配器分支判的是调用方镜像。
+    // 只有 self 不是已配置语言的目标 bundle 时才轮到适配器，两条路径互不影响。
+    NSString *adapterLang = adapterLanguageForCallerAddress(
+        __builtin_return_address(0), TLAdapterInterceptBundlePreferredLocalizations);
+    if (adapterLang.length > 0) return @[adapterLang];
+
     return %orig;
 }
 
@@ -504,13 +527,16 @@ static void preferencesChanged(CFNotificationCenterRef center,
 
 // 只有按 .lproj 提供本地化的 bundle 才走上面的 NSBundle hook。Hello 键盘侠 这类
 // 插件没有任何 .lproj，它自己用 [[[NSLocale preferredLanguages] firstObject]
-// hasPrefix:@"zh"] 决定显示中文还是英文，所以这里按调用方镜像改写返回值：
-// 调用方来自已配置语言的适配器 bundle 时才生效，Settings.app 自身和其它
-// PreferenceBundle 的调用一律 %orig。
+// hasPrefix:@"zh"] 决定显示中文还是英文；STTool 则用
+// [[[NSBundle mainBundle] preferredLocalizations] firstObject] hasPrefix:@"zh"]。
+// 所以这里按调用方镜像改写它们各自查询的那个接口的返回值：
+// 调用方来自已配置语言的适配器 bundle、且该条目声明的就是这个接口时才生效，
+// Settings.app 自身和其它 PreferenceBundle 的调用一律 %orig。
 %hook NSLocale
 
 + (NSArray<NSString *> *)preferredLanguages {
-    NSString *language = adapterLanguageForCallerAddress(__builtin_return_address(0));
+    NSString *language = adapterLanguageForCallerAddress(
+        __builtin_return_address(0), TLAdapterInterceptLocalePreferredLanguages);
     if (language.length > 0) {
         return @[language];
     }

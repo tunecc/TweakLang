@@ -16,7 +16,16 @@ xcuserdata/
 .vscode/
 
 # Tool scaffolding generated as a side effect, not project work
+# Agent/CLI 把各自的 skills、rules、hooks 装进项目里当脚手架，
+# 与 TweakLang 本身无关，不该出现在 git status 里。
+/.agents/
+/.claude/
+/.codex/
 docs/openspec/
+
+# Comet 自己在仓库根生成的 ambient-resume 提示块（由 comet init/update 托管）
+/AGENTS.md
+/CLAUDE.md
 
 # Logs
 *.log

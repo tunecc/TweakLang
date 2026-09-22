@@ -692,7 +692,10 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 
     if (languages.count == 0) {
         // 没有 .lproj 的 bundle 默认跳过；命中「硬编码双语」适配器注册表的除外，
-        // 这类插件在代码里按 +[NSLocale preferredLanguages] 二选一，语言集合由注册表给出。
+        // 这类插件在代码里按首选语言二选一，语言集合由注册表给出。它们查询的接口不止一种：
+        // Hello 键盘侠 用 +[NSLocale preferredLanguages]，STTool 用
+        // -[NSBundle preferredLocalizations]；运行时按条目声明的拦截点分别改写，列表侧
+        // 只关心语言集合，因此这里读 languages 就够。
         const TLAdapterEntry *adapter = TLAdapterForBundle(bundlePath);
         if (!adapter) {
             return nil;

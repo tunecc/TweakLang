@@ -1,13 +1,8 @@
 #import <Foundation/Foundation.h>
+#import <dlfcn.h>
+#import <string.h>
 
-#ifdef __has_include
-  #if __has_include(<roothide.h>)
-    #include <roothide.h>
-  #endif
-#endif
-#ifndef jbroot
-  #define jbroot(path) path
-#endif
+#import "TLAdapters.h"
 
 #define PREF_DOMAIN        CFSTR("com.tune.tweaklang")
 #define PREF_NOTIFICATION  CFSTR("com.tune.tweaklang/prefschanged")
@@ -16,6 +11,12 @@
 static NSDictionary *bundleLanguageMap = nil;
 static NSDictionary *bundleLanguageAliasMap = nil;
 static NSCache *stringsCache = nil;
+
+// 适配器型覆盖的查找表：镜像路径中的 "<bundle>.bundle/" 标记 -> 用户选定的语言。
+// 只有在用户真的为某个适配器 bundle 选了非 system 语言时才有条目，为空时 hook 直接 %orig。
+static NSDictionary *adapterImageLanguageMap = nil;
+
+static void rebuildAdapterImageLanguageMap(void);
 
 #pragma mark - Preference Loading
 
@@ -254,8 +255,14 @@ static void loadPreferences() {
     for (NSString *key in prefs) {
         if ([key hasPrefix:LANG_KEY_PREFIX]) {
             NSString *bundleName = [key substringFromIndex:LANG_KEY_PREFIX.length];
-            NSString *lang = prefs[key];
-            if (lang && ![lang isEqualToString:@"system"]) {
+
+            // 偏好文件可能被手改成非字符串值；类型不符时跳过，否则后面的
+            // isEqualToString: 会在 %ctor 里直接把 Settings 带崩。
+            id rawValue = prefs[key];
+            if (![rawValue isKindOfClass:[NSString class]]) continue;
+            NSString *lang = (NSString *)rawValue;
+
+            if (lang.length > 0 && ![lang isEqualToString:@"system"]) {
                 map[bundleName] = lang;
 
                 NSString *alias = normalizedBundleKey(bundleName);
@@ -273,6 +280,98 @@ static void loadPreferences() {
     bundleLanguageMap = [map copy];
     bundleLanguageAliasMap = [aliasMap copy];
     [stringsCache removeAllObjects];
+
+    rebuildAdapterImageLanguageMap();
+}
+
+#pragma mark - Hardcoded Bilingual Adapters
+
+static BOOL adapterSupportsLanguage(const TLAdapterEntry *entry, NSString *language) {
+    if (!entry || language.length == 0) return NO;
+
+    for (NSUInteger index = 0; index < entry->languageCount; index++) {
+        NSString *supported = [NSString stringWithUTF8String:entry->languages[index]];
+        if ([supported isEqualToString:language]) {
+            return YES;
+        }
+    }
+
+    return NO;
+}
+
+static NSString *configuredLanguageForAdapter(const TLAdapterEntry *entry) {
+    if (!entry || entry->bundleName == NULL) return nil;
+
+    // 只用 bundleName 及其 normalized 形式当候选键。bundleName 就是列表侧写的
+    // bundleKey，所以这里取到的就是 UI 写下去的那个值；不再用 CFBundleIdentifier
+    // 尾段当候选，否则另一个恰好叫同名的 bundle 的偏好会被这个适配器捡走。
+    NSMutableArray *candidates = [NSMutableArray array];
+    NSString *bundleName = [NSString stringWithUTF8String:entry->bundleName];
+    [candidates addObject:bundleName];
+
+    NSString *normalized = normalizedBundleKey(bundleName);
+    if (normalized.length > 0) {
+        [candidates addObject:normalized];
+    }
+
+    for (NSString *candidate in candidates) {
+        NSString *language = bundleLanguageMap[candidate];
+        if (language.length > 0) {
+            return language;
+        }
+    }
+
+    NSString *alias = normalizedBundleKey(bundleName);
+    if (alias.length > 0) {
+        NSString *language = bundleLanguageAliasMap[alias];
+        if (language.length > 0) {
+            return language;
+        }
+    }
+
+    return nil;
+}
+
+static void rebuildAdapterImageLanguageMap() {
+    NSMutableDictionary *imageMap = [NSMutableDictionary dictionary];
+    NSUInteger count = 0;
+    const TLAdapterEntry *table = TLAdapterTable(&count);
+
+    for (NSUInteger index = 0; index < count; index++) {
+        const TLAdapterEntry *entry = &table[index];
+
+        NSString *language = configuredLanguageForAdapter(entry);
+        if (language.length == 0 || [language isEqualToString:@"system"]) continue;
+        if (!adapterSupportsLanguage(entry, language)) continue;
+
+        NSString *marker = TLAdapterImageMarker(entry);
+        if (marker.length == 0) continue;
+        imageMap[marker] = language;
+    }
+
+    adapterImageLanguageMap = [imageMap copy];
+}
+
+// address 必须是 hook 方法体里直接取得的 __builtin_return_address(0)，
+// 也就是调用 +[NSLocale preferredLanguages] 的那条指令的返回地址。
+static NSString *adapterLanguageForCallerAddress(void *address) {
+    if (adapterImageLanguageMap.count == 0) return nil;
+    if (address == NULL) return nil;
+
+    Dl_info info;
+    memset(&info, 0, sizeof(info));
+    if (dladdr(address, &info) == 0 || info.dli_fname == NULL) return nil;
+
+    NSString *imagePath = [NSString stringWithUTF8String:info.dli_fname];
+    if (imagePath.length == 0) return nil;
+
+    for (NSString *marker in adapterImageLanguageMap) {
+        if ([imagePath containsString:marker]) {
+            return adapterImageLanguageMap[marker];
+        }
+    }
+
+    return nil;
 }
 
 #pragma mark - Bundle Matching
@@ -292,14 +391,15 @@ static NSString *targetLanguageForBundle(NSBundle *bundle) {
     NSString *bundlePath = [bundle bundlePath];
     if (!isTargetBundle(bundlePath)) return nil;
 
-    for (NSString *candidate in bundleCandidates(bundle)) {
+    NSArray *candidates = bundleCandidates(bundle);
+    for (NSString *candidate in candidates) {
         NSString *language = bundleLanguageMap[candidate];
         if (language.length > 0) {
             return language;
         }
     }
 
-    for (NSString *candidate in bundleCandidates(bundle)) {
+    for (NSString *candidate in candidates) {
         NSString *normalized = normalizedBundleKey(candidate);
         NSString *language = bundleLanguageAliasMap[normalized];
         if (language.length > 0) {
@@ -394,6 +494,25 @@ static void preferencesChanged(CFNotificationCenterRef center,
         if (result.length > 0) {
             return result;
         }
+    }
+    return %orig;
+}
+
+%end
+
+#pragma mark - Hardcoded Bilingual Adapters
+
+// 只有按 .lproj 提供本地化的 bundle 才走上面的 NSBundle hook。Hello 键盘侠 这类
+// 插件没有任何 .lproj，它自己用 [[[NSLocale preferredLanguages] firstObject]
+// hasPrefix:@"zh"] 决定显示中文还是英文，所以这里按调用方镜像改写返回值：
+// 调用方来自已配置语言的适配器 bundle 时才生效，Settings.app 自身和其它
+// PreferenceBundle 的调用一律 %orig。
+%hook NSLocale
+
++ (NSArray<NSString *> *)preferredLanguages {
+    NSString *language = adapterLanguageForCallerAddress(__builtin_return_address(0));
+    if (language.length > 0) {
+        return @[language];
     }
     return %orig;
 }

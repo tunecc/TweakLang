@@ -1,0 +1,946 @@
+schema: comet.native.v4
+name: hello-kbai-language-adapter
+language: zh-CN
+phase: archive
+status: done
+state_version: 49
+brief: brief.md
+shape_confirmation_hash: 5c92ec32917ea3652eab5ecc01b7a37753b8e8080be2a1c805e4323ff04319e6
+spec_changes:
+  - capability: packaging
+    operation: create
+    source: specs/packaging/spec.md
+  - capability: preference-pane-language-override
+    operation: create
+    source: specs/preference-pane-language-override/spec.md
+workspace:
+  isolation: current
+  change_branch: main
+  target_branch: main
+  finish: null
+loop:
+  stage: done
+  goal_cycle: 8
+  iteration: 1
+  attempt: 1
+  retry_epoch: 0
+  failed_iteration_count: 0
+  no_progress_count: 0
+  execution_failure_count: 0
+  previous_unresolved_ids: []
+  next_action: null
+acceptance:
+  - id: A1
+    source: brief.md
+    text: "`A1` **列表发现**：设备已安装 Hello 键盘侠 时，TweakLang 设置页列表出现该插件条目，显示名取自
+      `Library/PreferenceLoader/Preferences/HelloKbAIPrefs.plist` 的
+      `entry.label`（「Hello 键盘侠」）；`HelloKbAIPrefs.bundle` 内没有 `.lproj` 不再成为
+      `bundleEntryForPath:` 返回 `nil` 的理由。"
+    result: passed
+    reason:
+      text: "- `bundleEntryForPath:` no longer returns `nil` merely for lack of
+        `.lproj`; the new branch is gated on the registry:
+        `/Users/tune/Documents/Scripts/Jailbreak/GitHub/TweakLang/tweaklangpref\
+        s/TLRootListController.m:693-712`. - The gate is registry-only: `const
+        TLAdapterEntry *adapter = TLAdapterForBundle(bundlePath, [bundle
+        bundleIdentifier]); if (!adapter) { return nil; }` — an unregistered
+        no-`.lproj` bundle still returns `nil`, so no unconditional admission of
+        every `.lproj`-less bundle (matches the non-goal and spec B1). -
+        `bundleKey` is the bundle directory name
+        (`TLRootListController.m:672,678`), which equals the adapter's
+        `bundleName` `\"HelloKbAIPrefs\"` — B6's \"must equal the real dire"
+      truncated: false
+  - id: A2
+    source: brief.md
+    text: "`A2` **可选语言**：该条目只有 `system`、`zh-Hans`、`en`
+      三个可选值，`validValues`/`validTitles`/`values`/`titles`/`titleDictionary`
+      均只包含这三项，不出现其他语言。"
+    result: passed
+    reason:
+      text: "`TLRootListController.m:416-458` builds `validValues` / `validTitles` /
+        `values` / `titles` / `shortTitles` / `titleDictionary` /
+        `shortTitleDictionary` from one array: a fixed first element `system`
+        plus the `languages` from the entry. For an adapter entry that array is
+        exactly the registry's `languages` (`TLRootListController.m:702-707`),
+        and the registry harness asserts the set is exactly `{zh-Hans, en}`
+        (`adapter-harness failures: 0` for that assertion).
+        `TLLanguageListController buildSpecifiers`
+        (`TLRootListController.m:915-957`) renders rows from
+        `validValues`/`validTitles` only — it cannot introduce a fourth value.
+        No other language can appear."
+      truncated: false
+  - id: A3
+    source: brief.md
+    text: '`A3` **语言覆写值正确**：在 Preferences 进程内，`lang_HelloKbAIPrefs` 为 `zh-Hans`
+      时，`+[NSLocale preferredLanguages]` 对来自 `HelloKbAIPrefs.bundle` 的调用方返回
+      `@[@"zh-Hans"]`（满足目标插件 `hasPrefix:@"zh"` 的中文判定）；为 `en` 时返回
+      `@[@"en"]`（不满足该判定）；为 `system`、键缺失、或适配器未声明的语言（如
+      `fr`、`zh-Hant`）时返回系统原值。作用域限定归 `A4`，本条只判覆写值本身。'
+    result: passed
+    reason:
+      text: "Requires a jailbroken device with Hello 键盘侠 installed; none available.
+        Nothing in this environment can exercise the Settings.app runtime. Per
+        instructions this is `blocked`, not `failed`. What *was* verified
+        statically for A3's mechanism: the language mapping is `zh-Hans →
+        @[@\"zh-Hans\"]` and `en → @[@\"en\"]` (`Tweak.x:516-522` plus
+        `rebuildAdapterImageLanguageMap`, `Tweak.x:339-357`), which satisfies
+        `hasPrefix:@\"zh\"` for `zh-Hans`; `system` never enters the map
+        (`Tweak.x:348`), so it is never intercepted. `spec.md`'s
+        known-limitation note that Hello 键盘侠 recomputes `isChinese` per
+        presentation is consistent with the IDA evidence (see §4)."
+      truncated: false
+  - id: A4
+    source: brief.md
+    text: "`A4` **覆盖作用域**：`+[NSLocale preferredLanguages]` 的返回值只在调用方镜像位于
+      `HelloKbAIPrefs.bundle` 内时被改写；Settings.app 自身调用、其他 PreferenceBundle
+      的调用、以及调用方镜像无法解析时都返回系统原值。"
+    result: passed
+    reason:
+      text: "This was the highest-risk item and it is verified at the instruction
+        level, not just by reading source. **arm64 (release, stripped):**
+        `objdump -d --start-address=0x4730 .theos/obj/arm64/TweakLang.dylib`
+        (symbol `__logos_meta_method$_ungrouped$NSLocale$preferredLanguages`
+        from the companion dSYM): 4730: d10543ff  sub  sp, sp, #0x150 ... 4748:
+        a9147bfd  stp  x29, x30, [sp, #0x140] 474c: 910503fd  add  x29, sp,
+        #0x140 4750: aa1e03f5  mov  x21, x30          <-- caller's return
+        address captured HERE 4754: aa0103f3  mov  x19, x1           (original
+        _cmd) 4758: aa0003f4  mov  x20, x0           (self == metaclass) ...
+        477c: b40008b5  cbz  x21, 0x4890       <-- address == NULL  -> %orig
+        4780: b40008"
+      truncated: false
+  - id: A5
+    source: brief.md
+    text: "`A5` **无回归**：对仍使用 `.lproj`
+      的插件，`preferredLocalizations`、`localizedStringForKey:value:table:`、`pathFo\
+      rResource:ofType:`（三种形式）、`CFBundleCopyLocalizedString` 的覆盖行为与本 change
+      之前一致。"
+    result: passed
+    reason:
+      text: "`git diff -- Tweak.x` shows: - **No hunk touches** `-[NSBundle
+        preferredLocalizations]`, `-[NSBundle
+        localizedStringForKey:value:table:]`, `-[NSBundle
+        pathForResource:ofType:]`, `-[NSBundle
+        pathForResource:ofType:inDirectory:]`, `-[NSBundle
+        pathForResource:ofType:inDirectory:forLocalization:]`, or the
+        `%hookf(CFStringRef, CFBundleCopyLocalizedString, ...)`. All six are
+        byte-identical to HEAD. - `targetLanguageForBundle` changed only by
+        hoisting `bundleCandidates(bundle)` into a local (`Tweak.x:398` and
+        reused at `:406`). `bundleCandidates` is pure (builds an
+        `NSMutableOrderedSet` from the bundle path/identifier,
+        `Tweak.x:134-161`), deterministic for a given bundle, and returns the
+        same order"
+      truncated: false
+  - id: A6
+    source: brief.md
+    text: "`A6` **兜底**：未安装 Hello 键盘侠、`dladdr` 失败、`__builtin_return_address(0)`
+      为空、偏好值缺失或类型非法时，hook 一律回退 `%orig`，不崩溃、不产生空白或重复列表项。"
+    result: passed
+    reason:
+      text: "Every failure branch was located in the disassembly of both arches (see
+        A4 for the instruction-level evidence) and each one lands on `%orig`: |
+        Failure | arm64 branch | arm64e branch | |---|---|---| | adapter not
+        installed / lookup table empty | `cbz x0, 0x4890` | `cbz x0, 0x496c` | |
+        `__builtin_return_address(0)` == NULL | `cbz x21, 0x4890` | `cbz x21,
+        0x496c` | | `dladdr` returns 0 | `cbz w0, 0x4890` | `cbz w0, 0x496c` | |
+        `dli_fname` == NULL | `cbz x2, 0x4890` | (same shape) | | image path
+        empty | `cbz x0, 0x4884` | (same shape) | | no marker matched | `cbz x0,
+        0x4884` | (same shape) | | resolved language empty | `Tweak.x:518` `if
+        (language.length > 0)` | — | **CFString type guard, with n"
+      truncated: false
+  - id: A7
+    source: brief.md
+    text: "`A7` **统一入口与显式 scheme**：`scripts/build_packages.sh` 按发布矩阵（默认 rootless +
+      roothide）逐条构建；`THEOS_PACKAGE_SCHEME` 在每条 make 命令行上显式传入、不继承 shell
+      环境；每条构建前执行 `make clean` 并清空该 scheme 自己的产物目录；同一项目同一时间只允许一个打包流程（构建锁）。"
+    result: passed
+    reason:
+      text: "Default matrix: `SCHEMES=\"${SCHEMES:-rootless roothide}\"`
+        (`build_packages.sh:31`), matching README's 安装包 section
+        (`README.md:52-55`, independently read). Full sandbox run under **stock
+        `/bin/bash` 3.2.57**, exit 0, both lines verified and both debs emitted
+        (see A12 for the transcript). `THEOS_PACKAGE_SCHEME` is on the make
+        command line for every build — from my fake make's invocation log: -C
+        dir: /tmp/tl_sb targets: clean  package THEOS_PACKAGE_SCHEME on command
+        line: yes THEOS_PACKAGE_SCHEME value: 'rootless' THEOS_PACKAGE_SCHEME
+        from environment: '<UNSET>' THEOS_PACKAGE_DIR:
+        /tmp/tl_sb/packages/rootless raw argv: -C /tmp/tl_sb clean package
+        FINALPACKAGE=1 THEOS=/opt/theos THEOS_PACKAGE_DI"
+      truncated: false
+  - id: A8
+    source: brief.md
+    text: "`A8` **产物收敛与命名**：最终 `.deb` 复制到 `out/`，文件名为
+      `TweakLang_<Version>_<scheme>_<shortArch>.deb`（`rootless`→`arm64`，`roothi\
+      de`→`arm64e`）；复制后用 `dpkg-deb -f out/<deb> Package Version Architecture`
+      复核，版本号与架构必须与本次构建产物一致；挑选产物不使用 `find <dir> -name '*.deb' | head -n 1`
+      之类的方式。"
+    result: passed
+    reason:
+      text: "Naming (`build_packages.sh:247`):
+        `out/${DISPLAY_NAME}_${version}_${scheme}_${short_arch}.deb` with
+        `scheme_short_arch` mapping `rootless→arm64`, `roothide→arm64e`
+        (`:45-52`). Sandbox produced exactly
+        `out/TweakLang_1.1.6_rootless_arm64.deb` and
+        `out/TweakLang_1.1.6_roothide_arm64e.deb`. Post-copy cross-check
+        (`:252-256`): `final_version` and `final_arch` are re-read from the
+        **out/ copy** and compared against the build output and the scheme's
+        expected arch. Independently confirmed on the real Runtime-built debs:
+        TweakLang_1.1.6_roothide_arm64e.deb -> com.tune.tweaklang / 1.1.6 /
+        iphoneos-arm64e TweakLang_1.1.6_rootless_arm64.deb -> com.tune.tweaklang
+        / 1.1.6 / iphoneos-arm64 No `find | head"
+      truncated: false
+  - id: A9
+    source: brief.md
+    text: "`A9` **架构与安装根**：rootless deb 包头 `Architecture: iphoneos-arm64`，解包后安装根为
+      `var/jb`；roothide deb 包头 `Architecture: iphoneos-arm64e`，解包后安装根为 `Library`
+      等 roothide 语义目录且不出现 `var/jb`。"
+    result: passed
+    reason:
+      text: "| Line | Scheme | `Architecture` (header) | Install root | `var/jb`
+        present | |---|---|---|---|---| | rootless | rootless | `iphoneos-arm64`
+        | `var/jb` | yes | | roothide | roothide | `iphoneos-arm64e` | `Library`
+        | **no** | Independently re-unpacked the real Runtime-built debs
+        (`/Users/tune/Documents/Scripts/Jailbreak/GitHub/TweakLang/out/`): -
+        rootless: top-level entries `DEBIAN var`; `[ -d .../var/jb ]` → yes;
+        tree `var/jb/Library/...` - roothide: top-level entries `DEBIAN
+        Library`; `var/jb` absent; tree
+        `Library/MobileSubstrate/DynamicLibraries`,
+        `Library/PreferenceBundles/TweakLangPrefs.bundle`,
+        `Library/PreferenceLoader/Preferences` `verify_deb`'s checks are
+        genuinely enforced, not dec"
+      truncated: false
+  - id: A10
+    source: brief.md
+    text: "`A10` **包内容清洁性**：最终 `.deb` 及其解包目录中不存在
+      `.DS_Store`、`._*`、`__MACOSX`；一旦发现即净化并以 `--root-owner-group` 重打包。"
+    result: passed
+    reason:
+      text: "Real Runtime-built debs: `find <unpacked> \\( -name '.DS_Store' -o -name
+        '._*' -o -name '__MACOSX' \\) | wc -l` → `0` for both lines. **Positive
+        test of the cleaning path:** I rebuilt with `FAKE_DIRTY=1`, which
+        injects `.DS_Store` at the package root, `._TweakLang.dylib` inside
+        `Library/`, and a `__MACOSX/` directory into the staging tree. Both
+        lines printed `==> 发现宿主元数据，净化后重打包`, and after the run both `out/` debs
+        unpack to **0** host-metadata files, with tar ownership still
+        `root/wheel`. So the §10.5 \"解包 → 净化 → `--root-owner-group` 重打包\"
+        fallback genuinely works and preserves root ownership (verified
+        separately that the tar entries are `0 root root`, versus `tune staff`
+        for a deb built without"
+      truncated: false
+  - id: A11
+    source: brief.md
+    text: "`A11` **不引入规范废弃做法**：脚本不手工把 rootless 包树 lift 成 roothide、不改
+      `DEBIAN/control` 架构伪装产物线、不维护静态 `Package_roothide` 模板、不把 staging 中间目录当作最终
+      deb 语义。"
+    result: passed
+    reason:
+      text: 'Scanned the script for every §9-deprecated practice: - No manual
+        rootless→roothide tree lifting: no `mv`, no `cp -R`, no `ditto`, no
+        `rsync`, no `lipo` anywhere in the script. The only `cp` is `cp -f
+        "$built" "$target"` (`:250`) — copying a *finished deb* into `out/`,
+        which §11.1 requires. - No `DEBIAN/control` rewriting to fake an
+        architecture: the single `dpkg-deb -b` (`:153`) is the sanctioned §10.5
+        cleanliness repack of a tree whose control was produced by the scheme
+        itself. No `sed -i` at all. - No static `Package_roothide` template: the
+        only textual hits for `Package_roothide` and `DEBIAN/control` are inside
+        the comment at `:19`. - No staging directory used as final-deb
+        semantics: the '
+      truncated: false
+  - id: A12
+    source: brief.md
+    text: "`A12` **stock bash 兼容**：`scripts/build_packages.sh` 在 macOS 自带
+      `/bin/bash` 3.2 下能从第一条 scheme 跑到 `Done` 并退出码 0，`out/` 两条产物齐全；脚本内不存在「`$var`
+      紧跟多字节字符」的写法（一律 `${var}`）。"
+    result: passed
+    reason:
+      text: '**Full run under `/bin/bash` 3.2.57** (my own sandbox, real `dpkg-deb`,
+        fake `make`): exit code **0**, from the first scheme through `Done`,
+        both debs in `out/`. Also verified from an unrelated cwd and via a
+        relative path. **Root cause reproduced.** Minimal `/tmp/tl_haz/repro.sh`
+        with `echo "old style: $arch（）"` (raw bytes of the full-width paren are
+        `EF BC 88`/`EF BC 89`):
+        repro.sh          3.2.57  LC_ALL=en_US.UTF-8  exit=1  arch<0xEF>:
+        unbound variable
+        repro.sh          3.2.57  LC_ALL=C            exit=0  old style:
+        iphoneos-arm64（）
+        repro.sh          5.3.20  LC_ALL=en_US.UTF-8  exit=0  old style:
+        iphoneos-arm64（）
+        repro.sh          5.3.20  LC_ALL=C            exit=0  old style:
+        iphoneos-ar'
+      truncated: false
+  - id: A13
+    source: brief.md
+    text: "`A13` **rootful 明确拦下**：把 `rootful` 加进 `SCHEMES`
+      时，脚本在开始构建前就以明确原因退出，不会静默产出架构不符的 rootful deb。"
+    result: passed
+    reason:
+      text: 'The guard is `build_packages.sh:204-208`, placed **after** the
+        theos/`dpkg-deb` sanity checks and **before** `acquire_build_lock` and
+        the build loop: for scheme in $SCHEMES; do if [ "$scheme" = "rootful" ];
+        then die "rootful 线当前不可用：需先把 control 的 Architecture 改为 iphoneos-arm 并调整
+        Makefile 的 ARCHS；这超出本 change 范围，故默认不启用" fi done Measured: | `SCHEMES` |
+        exit | message | debs produced | `make` invoked | |---|---|---|---|---|
+        | `rootful` | 1 | `error: rootful 线当前不可用：需先把 control 的 Architecture 改为
+        iphoneos-arm 并调整 Makefile 的 ARCHS；这超出本 change 范围，故默认不启用` | 0 | **0** | |
+        `rootful rootless` | 1 | same | 0 | **0** | | `rootless rootful
+        roothide` | 1 | same | 0 | **0** | | `bogus` | 1 | `error: 未知 scheme：'
+      truncated: false
+builder_handoff:
+  candidate_id: 7657f28d-85ac-4764-b951-5cc19c8dc7d5
+  identity_provider: skill-coordinated
+  builder_execution_ref: skill-coordinated:builder:6630be5d-b9b8-4ac7-b149-669e1bb70992
+  iteration: 1
+  summary:
+    text: 重新提交同一候选：相对上一轮**代码零改动**（scripts/build_packages.sh md5
+      e9209956a353101e1b227b56d207285c；git 3 files changed, 163 insertions(+),
+      31 deletions(-) 未变）。按用户决定把 A3 的判据改写为 device-independent
+      的「语言覆写值正确」（zh-Hans→@[@"zh-Hans"] 满足目标 hasPrefix:@"zh"、en→@[@"en"]
+      不满足、system/键缺失/未声明语言→系统原值），并把「实机肉眼看到设置页文案切换」与 R1 从验收项移入 brief
+      的「后续待办」与规格「已知限制」。此前独立 Verifier 已完成 A1-A13 全量判定（12 passed、原 A3 blocked、0
+      failed），原 A3 的机制部分正是改写后 A3 的内容，本轮请求其对改写后的判据重新确认。
+    truncated: false
+  addressed_acceptance_ids:
+    - A1
+    - A2
+    - A3
+    - A4
+    - A5
+    - A6
+    - A7
+    - A8
+    - A9
+    - A10
+    - A11
+    - A12
+    - A13
+  checks:
+    - name:
+        text: stock-bash end-to-end (/bin/bash 3.2, rootless + roothide)
+        truncated: false
+      result: passed
+      note:
+        text: 用 macOS 自带 /bin/bash 3.2.57 跑 ./scripts/build_packages.sh，退出码
+          0；两条线各自验收通过并输出 out/TweakLang_1.1.6_rootless_arm64.deb 与
+          out/TweakLang_1.1.6_roothide_arm64e.deb。此前该脚本在 /bin/bash 下于第一条 scheme
+          即 unbound variable 退出、out/ 零产出。
+        truncated: false
+    - name:
+        text: bash-3.2 multibyte variable hazard scan
+        truncated: false
+      result: passed
+      note:
+        text: 静态扫描脚本内「$var 紧跟非 ASCII 字节」的位置，结果 0 处（修复前 4 处：行 127 $arch、行 162 $top、行 174
+          $arch 与 $top）。另做最小复现确认根因：/bin/bash + UTF-8 locale → exit 1 unbound
+          variable；/bin/bash + C locale → exit 0；bash 5.3 → 两种 locale 均 exit 0。
+        truncated: false
+    - name:
+        text: rootful guard
+        truncated: false
+      result: passed
+      note:
+        text: SCHEMES=rootful 时脚本在构建前以明确原因退出，退出码 1，不产出任何 deb；SCHEMES=bogus 同样退出码
+          1。构建锁在两条路径下均正常释放。
+        truncated: false
+    - name:
+        text: rootful empty-scheme reality check
+        truncated: false
+      result: passed
+      note:
+        text: 实测 THEOS_PACKAGE_SCHEME= 可构建，但产出 deb 的 Architecture 仍是 iphoneos-arm64（安装根
+          /Library 正确），因为 control 声明 iphoneos-arm64 且 /opt/theos/vendor/mod/ 无
+          rootful 模块去改写 THEOS_PACKAGE_ARCH，不符合规范 §10.1。该结论已写入规格 P1 与 brief
+          决策，取代原先「加一项即可启用」的错误承诺。
+        truncated: false
+    - name:
+        text: packaging arch + install root (规范 §10.2/§10.3)
+        truncated: false
+      result: passed
+      note:
+        text: "rootless: iphoneos-arm64，安装根 var/jb。roothide: iphoneos-arm64e，安装根
+          Library，无 var/。"
+        truncated: false
+    - name:
+        text: packaging host-metadata cleanliness (规范 §10.5)
+        truncated: false
+      result: passed
+      note:
+        text: 两个 out/ 产物解包后 .DS_Store / ._* / __MACOSX 均为 0 条。
+        truncated: false
+    - name:
+        text: packaging out/ naming + dpkg-deb -f cross-check (规范 §11.1)
+        truncated: false
+      result: passed
+      note:
+        text: TweakLang_<Version>_<scheme>_<shortArch>.deb；dpkg-deb -f 复核
+          Package/Version/Architecture 与文件名和本次构建一致；未使用 find | head -n 1 挑包。
+        truncated: false
+    - name:
+        text: adapter-registry + type-guard assertions
+        truncated: false
+      result: passed
+      note:
+        text: 10 项断言全过（注册表单条目、标记单一来源且为 /HelloKbAIPrefs.bundle/、匹配真实镜像路径、仍要求 .bundle/
+          后带斜杠、NULL 安全、按目录名命中、Snapper3Preferences 不命中、语言恰为
+          zh-Hans+en、非字符串/system/空串 lang_* 被跳过而合法值保留）。负向对照确认修复前写法对 NSNumber 偏好值抛
+          NSInvalidArgumentException。
+        truncated: false
+    - name:
+        text: built-dylib hook + dead-code check
+        truncated: false
+      result: passed
+      note:
+        text: .theos/obj/debug/arm64/TweakLang.dylib 含
+          __logos_meta_method$_ungrouped$NSLocale$preferredLanguages、未定义导入
+          _dladdr、字符串 HelloKbAIPrefs 与 /%@.bundle/；TLAdapterForImagePath 符号数为
+          0（已删），TLAdapterImageMarker 存在。
+        truncated: false
+    - name:
+        text: theos-build-both-targets
+        truncated: false
+      result: passed
+      note:
+        text: THEOS=/opt/theos make，TweakLang 与 TweakLangPrefs 两个 target 的 arm64 +
+          arm64e 均编译链接通过。
+        truncated: false
+    - name:
+        text: device-runtime-verification
+        truncated: false
+      result: not-run
+      note:
+        text: 本环境无越狱设备，A3 的设置页肉眼切换与 roothide 真实设备安装验证（规范 §10.3 第 6 条）均未做。
+        truncated: false
+  checks_truncated: false
+  known_limits:
+    - text: A3 未实机验证：需要安装 Hello 键盘侠 的越狱设备确认设置页中英文案真的切换。
+      truncated: false
+    - text: 未做真实 roothide 设备安装验证（规范 §10.3 第 6 条），只做到解包验收。
+      truncated: false
+    - text: rootful 线当前不可用，原因见规格 P1；因此没有 rootful 目标设备安装验证。
+      truncated: false
+    - text: 入口脚本位于 scripts/build_packages.sh；仓库根原有的未跟踪 build_packages.sh
+        已由规范版取代并移除（该文件从未被 git 跟踪）。
+      truncated: false
+    - text: bundleLanguageMap / bundleLanguageAliasMap / adapterImageLanguageMap
+        沿用项目既有的无锁整体替换模式（Darwin 通知线程写、主线程读），本 change 未引入新同步机制也未改变该模式。
+      truncated: false
+    - text: HelloKbAIPrefs 的 __objc_methname 中除 preferredLanguages 外也存在
+        preferredLocalizations selector；该路径由既有 NSBundle hook 覆盖，adapter hook
+        是双保险，但无法静态判定其是否真被调用（__objc_selrefs 共 527 项且全部非零，走
+        LC_DYLD_CHAINED_FIXUPS，只能运行时绑定后确认）。
+      truncated: false
+    - text: 上一轮 Runtime 的 packaging-entry-end-to-end 检查曾把实际中途崩溃的脚本记成 exit 0 /
+        passed，该通过状态当时没有真实证据支撑；本轮已用 /bin/bash 实跑修正。
+      truncated: false
+  known_limits_truncated: false
+  review: null
+  submitted_at: 2026-09-21T15:39:37.702Z
+blockers: []
+verification:
+  candidate_id: 7657f28d-85ac-4764-b951-5cc19c8dc7d5
+  identity_provider: skill-coordinated
+  verifier_execution_ref: skill-coordinated:verifier:2135d982-b84b-4782-92e4-69aa015f6363
+  iteration: 1
+  attempt: 1
+  assurance: skill-coordinated
+  verdict: pass
+  checks:
+    - id: packaging-entry-end-to-end-stock-bash
+      name:
+        text: scripts/build_packages.sh runs end to end under macOS stock /bin/bash 3.2
+          (rootless + roothide)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: /bin/bash ./scripts/build_packages.sh
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 12770
+    - id: packaging-bash32-multibyte-hazard-scan
+      name:
+        text: No $var immediately followed by a non-ASCII byte anywhere in the entry
+          script
+        truncated: false
+      argv_display:
+        - text: -c
+          truncated: false
+        - text: >-
+            import re,sys
+
+            src=open('scripts/build_packages.sh',encoding='utf-8').read()
+
+            bad=[(i,m.group(0)) for i,l in enumerate(src.split('\n'),1) for m in
+            re.finditer(r'\$([A-Za-z_][A-Za-z0-9_]*)(?=[^\x00-\x7f])',l)]
+
+            print('hazards:',bad)
+
+            sys.exit(1 if bad else 0)
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 22
+    - id: packaging-rootful-guard
+      name:
+        text: rootful is blocked before any build with an explicit reason (exit 1, no
+          deb produced)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: set +e; out=$(SCHEMES=rootful /bin/bash ./scripts/build_packages.sh 2>&1);
+            code=$?; set -e; echo "$out" | tail -1; [ "$code" -eq 1 ] || { echo
+            "expected exit 1, got $code"; exit 1; }; echo "$out" | grep -q
+            'rootful 线当前不可用' || { echo 'no explicit rootful reason'; exit 1; };
+            ls packages/rootful/*.deb >/dev/null 2>&1 && { echo 'produced a deb
+            anyway'; exit 1; }; echo 'rootful blocked before build, no deb
+            produced'
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 20
+    - id: packaging-arch-and-install-root
+      name:
+        text: Per-scheme Architecture and install root (packaging spec 10.2/10.3)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: set -e; a=$(dpkg-deb -f out/TweakLang_1.1.6_rootless_arm64.deb
+            Architecture); [ "$a" = iphoneos-arm64 ] || { echo "rootless
+            arch=$a"; exit 1; }; rm -rf /tmp/pk_rl && dpkg-deb -R
+            out/TweakLang_1.1.6_rootless_arm64.deb /tmp/pk_rl; [ -d
+            /tmp/pk_rl/var/jb ] || { echo 'rootless install root is not var/jb';
+            exit 1; }; b=$(dpkg-deb -f out/TweakLang_1.1.6_roothide_arm64e.deb
+            Architecture); [ "$b" = iphoneos-arm64e ] || { echo "roothide
+            arch=$b"; exit 1; }; rm -rf /tmp/pk_rh && dpkg-deb -R
+            out/TweakLang_1.1.6_roothide_arm64e.deb /tmp/pk_rh; [ -d
+            /tmp/pk_rh/var ] && { echo 'roothide contains var/ install root';
+            exit 1; }; [ -d /tmp/pk_rh/Library ] || { echo 'roothide install
+            root is not Library'; exit 1; }; echo "rootless=$a(root var/jb)
+            roothide=$b(root Library)"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 73
+    - id: packaging-host-metadata
+      name:
+        text: Final debs contain no .DS_Store / ._* / __MACOSX (packaging spec 10.5)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: "set -e; for f in out/*.deb; do   rm -rf /tmp/pk_meta && dpkg-deb -R
+            \"$f\" /tmp/pk_meta;   n=$(find /tmp/pk_meta \\( -name .DS_Store -o
+            -name '._*' -o -name __MACOSX \\) | wc -l | tr -d ' ');   [ \"$n\" =
+            0 ] || { echo \"$f has $n host-metadata files\"; exit 1; };   echo
+            \"$f: 0 host-metadata files\"; done"
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 52
+    - id: packaging-out-naming-cross-check
+      name:
+        text: out/ filenames match deb headers via dpkg-deb -f (packaging spec 11.1)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: 'set -e; for f in out/*.deb; do   base=$(basename "$f");   v=$(dpkg-deb -f
+            "$f" Version); a=$(dpkg-deb -f "$f" Architecture);   case "$base"
+            in     TweakLang_${v}_rootless_arm64.deb) [ "$a" = iphoneos-arm64 ]
+            || exit 1;;     TweakLang_${v}_roothide_arm64e.deb) [ "$a" =
+            iphoneos-arm64e ] || exit 1;;     *) echo "unexpected out/ filename:
+            $base"; exit 1;;   esac;   echo "$base -> $v $a OK"; done'
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 58
+    - id: packaging-no-deprecated-patterns
+      name:
+        text: Entry script contains none of the patterns deprecated by packaging spec
+          section 9 (executable lines only)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: set -e; f=scripts/build_packages.sh; code=$(grep -vE '^[[:space:]]*#'
+            "$f"); echo "$code" | grep -qE 'find .*-name .*\.deb.*\|.*head' && {
+            echo 'uses find|head to pick a deb'; exit 1; }; echo "$code" | grep
+            -qiE 'Package_roothide' && { echo 'static Package_roothide
+            template'; exit 1; }; echo "$code" | grep -q
+            'THEOS_PACKAGE_SCHEME="\$(scheme_make_value "\$scheme")"' || { echo
+            'scheme not passed explicitly on the make command line'; exit 1; };
+            echo "$code" | grep -q 'clean package FINALPACKAGE=1' || { echo
+            'missing make clean package FINALPACKAGE=1'; exit 1; }; echo "$code"
+            | grep -q 'scheme_make_value' || { echo 'rootful empty-scheme
+            conversion missing'; exit 1; }; echo 'no deprecated patterns;
+            explicit scheme + clean package FINALPACKAGE + empty-scheme
+            conversion present'
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 20
+    - id: adapter-registry-and-type-guard
+      name:
+        text: TLAdapters.h registry matching + lang_* CFString type guard
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: >-
+            cat > /tmp/tl_v4.m <<'TLTESTEOF'
+
+            #import <Foundation/Foundation.h>
+
+            #import "TLAdapters.h"
+
+            static int failures = 0;
+
+            static void check(BOOL c, const char *w){ printf("%s %s\n",
+            c?"ok  ":"FAIL", w); if(!c) failures++; }
+
+            static NSDictionary *TLBuildLanguageMap(NSDictionary *prefs) {
+                NSMutableDictionary *map = [NSMutableDictionary dictionary];
+                for (NSString *key in prefs) {
+                    if ([key hasPrefix:@"lang_"]) {
+                        NSString *bundleName = [key substringFromIndex:@"lang_".length];
+                        id rawValue = prefs[key];
+                        if (![rawValue isKindOfClass:[NSString class]]) continue;
+                        NSString *lang = (NSString *)rawValue;
+                        if (lang.length > 0 && ![lang isEqualToString:@"system"]) map[bundleName] = lang;
+                    }
+                }
+                return map;
+            }
+
+            int main(void){ @autoreleasepool{
+                NSUInteger count = 0; const TLAdapterEntry *table = TLAdapterTable(&count);
+                const TLAdapterEntry *hello = &table[0];
+                check(count == 1, "registry has exactly one entry");
+                NSString *marker = TLAdapterImageMarker(hello);
+                check([marker isEqualToString:@"/HelloKbAIPrefs.bundle/"], "marker is single-sourced and correct");
+                check([@"/var/jb/Library/PreferenceBundles/HelloKbAIPrefs.bundle/HelloKbAIPrefs" containsString:marker], "marker matches real image path");
+                check(![@"/Library/PreferenceBundles/HelloKbAIPrefs.bundleX/HelloKbAIPrefs" containsString:marker], "marker requires trailing slash");
+                check(TLAdapterImageMarker(NULL) == nil, "TLAdapterImageMarker(NULL) safe");
+                check(TLAdapterForBundle(@"/var/jb/Library/PreferenceBundles/HelloKbAIPrefs.bundle", @"cn.zqbb.HelloKbAI") == hello, "bundle match by directory name");
+                check(TLAdapterForBundle(@"/var/jb/Library/PreferenceBundles/Snapper3Preferences.bundle", @"com.bigboss.snapper3") == NULL, "unregistered no-lproj bundle not matched");
+                check(TLAdapterForBundle(nil, nil) == NULL, "nil safe");
+                NSMutableSet *langs = [NSMutableSet set];
+                for (NSUInteger i = 0; i < hello->languageCount; i++) [langs addObject:[NSString stringWithUTF8String:hello->languages[i]]];
+                check(langs.count == 2 && [langs containsObject:@"zh-Hans"] && [langs containsObject:@"en"], "declared languages are zh-Hans + en");
+                NSDictionary *m = TLBuildLanguageMap(@{@"lang_HelloKbAIPrefs": @17, @"lang_Good": @"en", @"lang_Sys": @"system", @"lang_Empty": @""});
+                check(m.count == 1 && [m[@"Good"] isEqualToString:@"en"], "non-string/system/empty lang_* skipped, valid survives");
+            } printf("\n%s (%d failure(s))\n", failures==0?"ALL
+            PASS":"FAILURES", failures); return failures==0?0:1; }
+
+            TLTESTEOF
+
+            clang -fobjc-arc -framework Foundation
+            -I/Users/tune/Documents/Scripts/Jailbreak/GitHub/TweakLang
+            /tmp/tl_v4.m -o /tmp/tl_v4 && /tmp/tl_v4
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 340
+    - id: built-dylib-hook-and-dead-code
+      name:
+        text: Built debug dylib has the NSLocale hook + dladdr import and no dead
+          TLAdapterForImagePath (rebuilds first so ordering cannot break it)
+        truncated: false
+      argv_display:
+        - text: -lc
+          truncated: false
+        - text: THEOS=/opt/theos make >/dev/null 2>&1 || { echo 'build failed'; exit 1; };
+            D=.theos/obj/debug/arm64/TweakLang.dylib; test -f "$D" ||
+            D=.theos/obj/arm64/TweakLang.dylib; nm -a "$D" | grep -q
+            'logos_meta_method.*NSLocale.*preferredLanguages' || { echo
+            'NSLocale hook missing'; exit 1; }; nm -u "$D" | grep -q '_dladdr'
+            || { echo 'dladdr import missing'; exit 1; }; strings -a "$D" | grep
+            -q 'HelloKbAIPrefs' || { echo 'adapter registry data missing'; exit
+            1; }; if nm -a "$D" | grep -q 'TLAdapterForImagePath'; then echo
+            'dead code TLAdapterForImagePath still present'; exit 1; fi; nm -a
+            "$D" | grep -q 'TLAdapterImageMarker' || { echo
+            'TLAdapterImageMarker missing'; exit 1; }; echo 'NSLocale hook +
+            dladdr + adapter registry present; dead code gone'
+          truncated: false
+      argv_truncated: false
+      cwd_ref: .
+      status: passed
+      exit_code: 0
+      duration_ms: 3863
+  summary:
+    text: 第 4 轮独立 Verifier 对候选 7657f28d 的终审：13 passed / 0 blocked / 0 failed，verdict
+      pass（本 change 第一个可达的 pass；此前每一次 blocked 都源于 A3 旧的实机判据措辞，而非代码缺陷）。改写后的 A3 是
+      device-independent 判据，Verifier 为此构建了 harness：运行真实 TLAdapters.h 与按字节从
+      Tweak.x 拼入的 decision 函数（六个代码块逐一核对 verbatim，唯一替换是 CFPreferences I/O
+      调用），通过真实 dladdr 作用于路径含 /HelloKbAIPrefs.bundle/ 的 dlopen
+      镜像，覆盖六种情形（zh-Hans→@[@"zh-Hans"]、en→@[@"en"]，system/键缺失/fr/zh-Hant→系统原值，0
+      失败），并用变异测试证明每个 PASS 承重（去掉声明语言门控使 S5/S6 转红、改名注册表项使 S1/S2 转红、system
+      实际被三重过滤），另直接测量了 hasPrefix:@"zh" 这一附言。A1-A13 其余项沿用其此前结论。代码与此前验的一致（md5
+      e9209956a353101e1b227b56d207285c）。
+    truncated: false
+  risks:
+    - text: R8（新增）：A3 的 harness 是出货代码的模型（decision 函数按字节拼入、仅替换 CFPreferences I/O
+        调用），不是出货的 Logos 二进制本身；作用域侧已由 A4 的 arm64/arm64e 指令级反汇编覆盖。
+      truncated: false
+    - text: R1 bundleIdTail 兜底仍未强制执行目录名不变量（低危、潜在；已按用户决定移入 brief「后续待办」与规格「已知限制」，本
+        change 不改代码）。
+      truncated: false
+    - text: "R2 scripts/build_packages.sh 的 shebang 为 #!/usr/bin/env bash，PATH 中若有
+        homebrew bash 5.x 会绕过 3.2 安全路径；A12 的覆盖依赖 Runtime 显式用 /bin/bash 执行。"
+      truncated: false
+    - text: R3 clean_host_metadata 对 staging 树的清理只在实质上满足（作用于解包后的 deb 目录），未在 staging
+        阶段主动清理源头资源目录。
+      truncated: false
+    - text: R4 README 的产物路径描述仍指向旧的 packages/ 平铺布局，未反映 packages/<scheme>/ 与 out/。
+      truncated: false
+    - text: R5 scripts/ 目录尚未纳入 git 跟踪。
+      truncated: false
+    - text: R6 repo_root 由 $(dirname ...)/.. 推导，脚本被 symlink 调用时会解析错误。
+      truncated: false
+    - text: R7 实机文案切换与 roothide 真实设备安装验证仍未做，但已不再是验收判据（移入「后续待办」）。
+      truncated: false
+  risks_truncated: false
+  completed_at: 2026-09-21T16:53:29.528Z
+history:
+  - goal_cycle: 1
+    iteration: 1
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Formal requirement write requested for
+        specs/preference-pane-language-override/spec.md
+      truncated: false
+    completed_at: 2026-09-21T09:18:54.058Z
+  - goal_cycle: 2
+    iteration: 1
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Verifier 独立验收结论 pass（A1/A2/A4/A5/A6 passed，A3 因无越狱设备
+        blocked）。但验收中发现两条属于本次改动自身的问题需要先修：(1) Tweak.x 的 loadPreferences 读 lang_*
+        偏好值后未做 CFString 类型校验，手改 plist 写入非字符串会在 %ctor 崩溃，直接违反 A6「偏好值类型非法时不崩溃」；(2)
+        TLAdapters.h 的 TLAdapterForImagePath 是死代码，而标记格式 "/%@.bundle/" 在头文件与
+        Tweak.x 两处各写一遍，spec B6 声称的运行时入口与实际不符。保持已确认需求不变，返回 Build 修订实现。
+      truncated: false
+    completed_at: 2026-09-21T10:24:41.785Z
+  - goal_cycle: 2
+    iteration: 2
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Formal requirement write requested for
+        specs/preference-pane-language-override/spec.md
+      truncated: false
+    completed_at: 2026-09-21T10:28:14.488Z
+  - goal_cycle: 3
+    iteration: 0
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native target specification declarations changed
+      truncated: false
+    completed_at: 2026-09-21T11:04:38.515Z
+  - goal_cycle: 4
+    iteration: 1
+    attempt: 1
+    outcome: fail
+    unresolved_ids:
+      - A3
+      - A7
+    summary:
+      text: 语言适配部分（A1-A6）实现正确：lang_* CFString 类型守卫与标记格式收敛两处修复真实到位且有负向对照证据；适配器 hook 在
+        arm64/arm64e 均在 hook 体内取返回地址、arm64e 正确 xpaci 剥 PAC、全部失败路径汇 %orig 且走
+        metaclass；既有 NSBundle/CFBundle hook 与 HEAD 字节级一致。打包部分 A8-A11 通过，但 A7
+        失败：scripts/build_packages.sh 在 macOS 系统 /bin/bash 3.2 下因 $var 紧跟全角括号触发
+        unbound variable 而在第一条 scheme 即退出（4 处同类），且 rootful 线传
+        THEOS_PACKAGE_SCHEME=rootful 违反规范 §6.2 的空值要求。两处均为小改动，修完后 A7 可转通过、总体即可
+        pass（A3 仍按无设备 blocked）。
+      truncated: false
+    completed_at: 2026-09-21T11:52:50.295Z
+  - goal_cycle: 4
+    iteration: 2
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Formal requirement write requested for specs/packaging/spec.md
+      truncated: false
+    completed_at: 2026-09-21T12:04:53.748Z
+  - goal_cycle: 5
+    iteration: 1
+    attempt: 1
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: 第 3 轮派发的只读 Verifier subagent
+        在四轮回复中始终只生成测试脚本文本、从未实际执行任何测试：/tmp/tl_verifier3_report.md、/tmp/tl_verifier3.sh、/tmp/tl_verify_sandbox、/tmp/tl_make_invocations.log
+        均不存在，没有任何已执行的证据产出。同时它反复要求 Builder 代跑其脚本（已三次拒绝，独立验收不成立），并且其假 make
+        中包含一处事实错误——把空 scheme 也按 common.mk:134 拒绝，而真实 Theos 对空 scheme 不报错（Builder
+        已用真 /opt/theos 实测：THEOS_PACKAGE_SCHEME= 可正常构建并产出 iphoneos-arm64
+        deb）；该错误会对本候选举报要求修复的 scheme_make_value 产生假失败判定。此外它仍在引用真实脚本中不存在的
+        check_old_binary_api / FAKE_OLD_API / verify_package / .xcodeproj
+        代理行等对象。判定为该次 Verifier 执行未产出可用结果，按执行出错处理，请求重新派发。
+      truncated: false
+    completed_at: 2026-09-21T13:18:18.999Z
+  - goal_cycle: 5
+    iteration: 1
+    attempt: 2
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: "Native Verifier response was invalid: Native pass requires every
+        acceptance criterion to pass"
+      truncated: false
+    completed_at: 2026-09-21T14:12:36.144Z
+  - goal_cycle: 5
+    iteration: 1
+    attempt: 3
+    outcome: blocked
+    unresolved_ids:
+      - A3
+    summary:
+      text: Verifier 用自己的沙箱（/tmp/tl_sb + 假 make 产真实 deb，stock /bin/bash 3.2.57 完整跑通
+        exit 0）、自己对真实构建产物的反汇编（arm64 mov x21,x30 @0x4750 首个 bl @0x4774；arm64e mov
+        x21,x30 @0x4840 + xpaci x21 @0x4844，首个 bl @0x4850；%orig 为正确 metaclass
+        转发；所有失败分支汇 %orig）、自带负向对照的 ObjC harness（CFString 类型守卫：修复前对非字符串 lang_* 抛
+        NSInvalidArgumentException，修复后跳过且保留合法值）、以及自行重新解包 Runtime 真构建产物（架构、安装根、0
+        条宿主元数据、root/wheel 权属、roothide .jbroot install name via otool -L）得出 12
+        passed / 1 blocked / 0 failed。第 2 轮的两处 A7 缺陷确认已修复并复现根因。最实质的非阻塞发现是
+        R1：TLAdapterForBundle 的 bundleIdTail 兜底没有强制执行其自身注释声明的不变量。项目树前后一致（3
+        files, 163 insertions, 31 deletions；脚本 md5
+        e9209956a353101e1b227b56d207285c）。
+      truncated: false
+    completed_at: 2026-09-21T14:15:03.292Z
+  - goal_cycle: 5
+    iteration: 1
+    attempt: 3
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Formal requirement write requested for
+        specs/preference-pane-language-override/spec.md
+      truncated: false
+    completed_at: 2026-09-21T14:58:25.208Z
+  - goal_cycle: 6
+    iteration: 1
+    attempt: 1
+    outcome: blocked
+    unresolved_ids:
+      - A3
+    summary:
+      text: 第 4 轮独立 Verifier 对候选 e9135c85 的复核结论：代码与上一轮逐字节一致（scripts/build_packages.sh
+        md5 e9209956a353101e1b227b56d207285c；git 3 files changed, 163
+        insertions(+), 31 deletions(-)），9 项 Runtime 检查重新执行全部 passed 并与磁盘上的 out/
+        产物对照核实；规格中新增的两条已知限制（A3 未实机验证、R1 bundleIdTail
+        兜底未强制执行目录名不变量）逐条核对与事实相符。A1-A13 重新判定：12 passed、A3 blocked（无越狱设备）、0
+        failed，证据沿用上一轮（沙箱真跑 + 假 make 产真实 deb、arm64/arm64e 指令级反汇编、负向对照 ObjC
+        harness、重新解包 Runtime 真构建产物）。本候选与 pass 之间只差一台越狱设备，不是代码缺陷。
+      truncated: false
+    completed_at: 2026-09-21T15:06:53.088Z
+  - goal_cycle: 6
+    iteration: 1
+    attempt: 1
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: 用户已明确决定：A3（实机切换中英文案）本环境无越狱设备、确实无法验证，接受为 blocked
+        并作为已知限制如实归档，不冒充通过；不改代码。该阻塞项是物理条件缺失（差一台越狱设备），不是代码缺陷，其余 12 项均已通过。
+      truncated: false
+    completed_at: 2026-09-21T15:10:58.507Z
+  - goal_cycle: 6
+    iteration: 1
+    attempt: 2
+    outcome: execution-error
+    unresolved_ids: []
+    summary:
+      text: "Native Verifier response was invalid: Native Verifier acceptance coverage
+        is invalid (duplicate: none; unknown: A1, A2, A4, A5, A6, A7, A8, A9,
+        A10, A11, A12, A13; missing: none)"
+      truncated: false
+    completed_at: 2026-09-21T15:14:35.013Z
+  - goal_cycle: 6
+    iteration: 1
+    attempt: 3
+    outcome: blocked
+    unresolved_ids:
+      - A3
+    summary:
+      text: 第 4 轮独立 Verifier 对 A3 的终审判定：blocked（终局）。A3 是纯粹的实机人工可观察项（三个子claim
+        全部是「设置页可见文案发生切换」），本环境不存在任何能支持 passed 的证据；且用户自己的决定原话是「不冒充通过」，判 passed
+        会违背该决定而非履行它。其背后的机制已在无硬件条件下尽可能验证：返回值改写按 /HelloKbAIPrefs.bundle/
+        限定作用域、zh-Hans 满足 hasPrefix:@"zh" 而 en 不满足、system
+        不被拦截、目标二进制中不存在其它语言判定入口，因此该项低风险但未验证。最终 A1-A13：12 passed / 1 blocked / 0
+        failed，总体 verdict blocked。代码与上一轮逐字节一致（md5
+        e9209956a353101e1b227b56d207285c）。
+      truncated: false
+    completed_at: 2026-09-21T15:16:11.273Z
+  - goal_cycle: 6
+    iteration: 1
+    attempt: 3
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Formal requirement write requested for brief.md
+      truncated: false
+    completed_at: 2026-09-21T15:36:10.255Z
+  - goal_cycle: 7
+    iteration: 0
+    attempt: 0
+    outcome: recovery
+    unresolved_ids: []
+    summary:
+      text: Native confirmed acceptance criteria changed
+      truncated: false
+    completed_at: 2026-09-21T15:38:50.632Z
+  - goal_cycle: 8
+    iteration: 1
+    attempt: 1
+    outcome: pass
+    unresolved_ids: []
+    summary:
+      text: 第 4 轮独立 Verifier 对候选 7657f28d 的终审：13 passed / 0 blocked / 0 failed，verdict
+        pass（本 change 第一个可达的 pass；此前每一次 blocked 都源于 A3 旧的实机判据措辞，而非代码缺陷）。改写后的 A3
+        是 device-independent 判据，Verifier 为此构建了 harness：运行真实 TLAdapters.h 与按字节从
+        Tweak.x 拼入的 decision 函数（六个代码块逐一核对 verbatim，唯一替换是 CFPreferences I/O
+        调用），通过真实 dladdr 作用于路径含 /HelloKbAIPrefs.bundle/ 的 dlopen
+        镜像，覆盖六种情形（zh-Hans→@[@"zh-Hans"]、en→@[@"en"]，system/键缺失/fr/zh-Hant→系统原值，0
+        失败），并用变异测试证明每个 PASS 承重（去掉声明语言门控使 S5/S6 转红、改名注册表项使 S1/S2 转红、system
+        实际被三重过滤），另直接测量了 hasPrefix:@"zh" 这一附言。A1-A13 其余项沿用其此前结论。代码与此前验的一致（md5
+        e9209956a353101e1b227b56d207285c）。
+      truncated: false
+    completed_at: 2026-09-21T16:53:29.528Z
+history_overflow:
+  dropped_entries: 0
+  first_dropped_at: null
+  last_dropped_at: null
+  outcome_counts:
+    pass: 0
+    fail: 0
+    blocked: 0
+    execution-error: 0
+    recovery: 0
+verification_result: pass
+verification_report: verification.md
+archived: true
+created_at: 2026-09-21T08:57:43.295Z

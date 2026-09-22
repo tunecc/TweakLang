@@ -2,6 +2,8 @@
 #import <Preferences/PSSpecifier.h>
 #import <Preferences/PSTableCell.h>
 
+#import "../TLAdapters.h"
+
 #define PREF_DOMAIN       @"com.tune.tweaklang"
 #define PREF_NOTIFICATION CFSTR("com.tune.tweaklang/prefschanged")
 #define LANG_KEY_PREFIX   @"lang_"
@@ -414,10 +416,11 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
         NSMutableArray *validValues = [NSMutableArray arrayWithObject:@"system"];
         NSMutableArray *validTitles = [NSMutableArray arrayWithObject:
             TLLocalizedString(@"system_default", @"System Default")];
+        NSLocale *displayLocale = TLDisplayLocale();
 
         for (NSString *langCode in languages) {
             [validValues addObject:langCode];
-            [validTitles addObject:[self displayNameForCode:langCode]];
+            [validTitles addObject:TLDisplayTitleForLanguageValue(langCode, displayLocale)];
         }
 
         PSSpecifier *spec = [PSSpecifier preferenceSpecifierNamed:name
@@ -688,7 +691,23 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     }
 
     if (languages.count == 0) {
-        return nil;
+        // 没有 .lproj 的 bundle 默认跳过；命中「硬编码双语」适配器注册表的除外，
+        // 这类插件在代码里按 +[NSLocale preferredLanguages] 二选一，语言集合由注册表给出。
+        const TLAdapterEntry *adapter = TLAdapterForBundle(bundlePath);
+        if (!adapter) {
+            return nil;
+        }
+
+        for (NSUInteger index = 0; index < adapter->languageCount; index++) {
+            NSString *language = [NSString stringWithUTF8String:adapter->languages[index]];
+            if (language.length > 0) {
+                [languages addObject:language];
+            }
+        }
+
+        if (languages.count == 0) {
+            return nil;
+        }
     }
 
     NSString *bundleDisplayName = TLBundleInfoDisplayName(bundle, bundleName);
@@ -857,20 +876,6 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
     }
 
     return labels;
-}
-
-#pragma mark - Language Display Names
-
-- (NSString *)displayNameForCode:(NSString *)code {
-    NSString *normalized = [code stringByReplacingOccurrencesOfString:@"_"
-                                                          withString:@"-"];
-    NSLocale *locale = TLDisplayLocale();
-    NSString *name = [locale displayNameForKey:NSLocaleIdentifier
-                                        value:normalized];
-    if (name && ![name isEqualToString:code] && ![name isEqualToString:normalized]) {
-        return [NSString stringWithFormat:@"%@ (%@)", name, code];
-    }
-    return code;
 }
 
 @end

@@ -15,9 +15,14 @@ xcuserdata/
 .idea/
 .vscode/
 
+# Tool scaffolding generated as a side effect, not project work
+docs/openspec/
+
 # Logs
 *.log
-build_packages.sh
-.gitignore
-BUILDING.md
 ios_tweak_language_override_9b0c06ff.plan.md
+# >>> Comet managed project state >>>
+!/.comet/
+/.comet/*
+!/.comet/config.yaml
+# <<< Comet managed project state <<<

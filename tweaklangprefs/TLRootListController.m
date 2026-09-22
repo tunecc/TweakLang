@@ -682,21 +682,43 @@ static NSString *TLDisplayTitleForLanguageValue(NSString *value, NSLocale *local
 
     NSFileManager *fm = [NSFileManager defaultManager];
     NSMutableArray *languages = [NSMutableArray array];
+    NSMutableSet *seenLanguageCodes = [NSMutableSet set];
     NSArray *contents = [fm contentsOfDirectoryAtPath:bundlePath error:nil];
     for (NSString *sub in contents) {
         if ([sub hasSuffix:@".lproj"] &&
             ![sub isEqualToString:@"Base.lproj"]) {
-            [languages addObject:[sub stringByDeletingPathExtension]];
+            NSString *code = [sub stringByDeletingPathExtension];
+            [languages addObject:code];
+
+            NSString *normalized = TLNormalizedLocalizationCode(code);
+            if (normalized.length > 0) {
+                [seenLanguageCodes addObject:normalized];
+            }
+        }
+    }
+
+    const TLAdapterEntry *adapter = TLAdapterForBundle(bundlePath);
+
+    // 条目声明了 baseLanguage：Base.lproj 代表的那个语言也是一个可选语言。
+    // 出现的不是 "Base"，而是它对应的语言代码——否则列表里只会有一个 zh_CN，
+    // 明明躺在 Base.lproj 里的英文永远送不到用户面前。这里按归一化形式去重，
+    // 免得 bundle 同时有 zh_CN.lproj 时 zh_CN 被列两遍。
+    // 只在命中注册表时生效，未登记 bundle 的扫描结果一行不变。
+    NSString *baseLanguage = TLAdapterBaseLanguage(adapter);
+    if (baseLanguage.length > 0) {
+        NSString *normalized = TLNormalizedLocalizationCode(baseLanguage);
+        if (normalized.length > 0 && ![seenLanguageCodes containsObject:normalized]) {
+            [languages addObject:baseLanguage];
+            [seenLanguageCodes addObject:normalized];
         }
     }
 
     if (languages.count == 0) {
         // 没有 .lproj 的 bundle 默认跳过；命中「硬编码双语」适配器注册表的除外，
         // 这类插件在代码里按首选语言二选一，语言集合由注册表给出。它们查询的接口不止一种：
-        // Hello 键盘侠 用 +[NSLocale preferredLanguages]，STTool 用
+        // Hello 键盘侠 用 +[NSLocale preferredLanguages]，STTool / Hello 120Hz / Hello CPU 用
         // -[NSBundle preferredLocalizations]；运行时按条目声明的拦截点分别改写，列表侧
         // 只关心语言集合，因此这里读 languages 就够。
-        const TLAdapterEntry *adapter = TLAdapterForBundle(bundlePath);
         if (!adapter) {
             return nil;
         }

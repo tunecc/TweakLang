@@ -185,6 +185,20 @@ static NSString *preferredLocalizationDirectory(NSString *bundlePath, NSString *
         }
     }
 
+    // Base 回落：条目声明了 baseLanguage 时，这个语言由 Base.lproj 提供。没有这一级，
+    // Hello 120Hz / Hello CPU 的英文文案虽然躺在 Base.lproj 里也取不到——它们没有 en.lproj，
+    // 而 B1 为英文造的那个代码（baseLanguage）在目录里并不存在。
+    // 只对命中注册表的 bundle 生效；未登记条目的 bundle 走到这里也只会拿到 nil。
+    NSString *baseLanguage = TLAdapterBaseLanguage(TLAdapterForBundle(bundlePath));
+    if (baseLanguage.length > 0 &&
+        [normalizedLocalizationCode(baseLanguage) isEqualToString:targetCode]) {
+        for (NSString *item in contents) {
+            if ([item isEqualToString:@"Base.lproj"]) {
+                return item;
+            }
+        }
+    }
+
     return nil;
 }
 
@@ -479,6 +493,18 @@ static void preferencesChanged(CFNotificationCenterRef center,
                 return result;
             }
         }
+
+        // 语言只由 Base.lproj 提供时，未被收录的 key 直接给 value/key。
+        // Base.lproj 只收开发区域语言的文案，这些 key 在真实的该语言设备上本来就显示
+        // value/key。此时若 %orig，NSBundle 会按系统语言再解析一次，把系统语言的译文
+        // 带回来，页面就成了「Base.lproj 英文 + 其余系统语言」的半中半英混排
+        // ——Hello CPU 的 Enable / Thermal Control / Don't Fix Battery Health
+        // 就只在 zh_CN.lproj 有译文。
+        // key 缺失说明调用方在问别的表，交给 %orig；只在真的查过这张 Bundle 的表之后才兜底。
+        if (key.length > 0 &&
+            [preferredLocalizationDirectory([self bundlePath], lang) isEqualToString:@"Base.lproj"]) {
+            return value.length > 0 ? value : key;
+        }
     }
     return %orig;
 }
@@ -525,13 +551,13 @@ static void preferencesChanged(CFNotificationCenterRef center,
 
 #pragma mark - Hardcoded Bilingual Adapters
 
-// 只有按 .lproj 提供本地化的 bundle 才走上面的 NSBundle hook。Hello 键盘侠 这类
-// 插件没有任何 .lproj，它自己用 [[[NSLocale preferredLanguages] firstObject]
-// hasPrefix:@"zh"] 决定显示中文还是英文；STTool 则用
-// [[[NSBundle mainBundle] preferredLocalizations] firstObject] hasPrefix:@"zh"]。
-// 所以这里按调用方镜像改写它们各自查询的那个接口的返回值：
-// 调用方来自已配置语言的适配器 bundle、且该条目声明的就是这个接口时才生效，
-// Settings.app 自身和其它 PreferenceBundle 的调用一律 %orig。
+// 只有按调用方镜像限定的 hook 才能接到 Hello 工具的判定：它们在
+// `[[NSBundle mainBundle] preferredLocalizations]` 上取语言，self 是 Settings.app 主 bundle，
+// 上面的资源型 hook 因路径含 /System/ 直接判定「不是目标 bundle」，接不到它。
+// - Hello 键盘侠：没有任何 .lproj，用 +[NSLocale preferredLanguages]。
+// - STTool / Hello 120Hz / Hello CPU：用 -[NSBundle preferredLocalizations]。
+//   后两个除了硬编码分支还真的提供 .lproj（Base.lproj=英文、zh_CN.lproj=中文），
+//   所以它们同时要 B5 改返回值、B4 把英文解析到 Base.lproj 才整页一致。
 %hook NSLocale
 
 + (NSArray<NSString *> *)preferredLanguages {
